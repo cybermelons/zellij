@@ -44,7 +44,7 @@ use zellij_utils::{
     errors::prelude::*,
     input::{
         command::TerminalAction,
-        layout::{PluginUserConfiguration, RunPlugin, RunPluginLocation, RunPluginOrAlias},
+        layout::{Layout, PluginUserConfiguration, RunPlugin, RunPluginLocation, RunPluginOrAlias},
         plugins::{PluginAliases, PluginConfig},
     },
     pane_size::Size,
@@ -193,6 +193,10 @@ pub struct WasmBridge {
         HashMap<RunPluginLocation, HashMap<PluginUserConfiguration, Vec<(PluginId, ClientId)>>>,
     pending_pipes: PendingPipes,
     layout_dir: Option<PathBuf>,
+    // path to the layout file this session was started with (the `--layout` argument), if any.
+    // used to re-read the layout from disk on plugin reload so that config changes made to the
+    // layout file are picked up (issue #3994)
+    layout_path: Option<PathBuf>,
     available_layouts: Vec<LayoutInfo>,
     available_layout_errors: Vec<LayoutWithError>,
     default_mode: InputMode,
@@ -214,6 +218,7 @@ impl WasmBridge {
         session_env_vars: std::collections::BTreeMap<String, String>,
         default_shell: Option<TerminalAction>,
         layout_dir: Option<PathBuf>,
+        layout_path: Option<PathBuf>,
         available_layouts: Vec<LayoutInfo>,
         available_layout_errors: Vec<LayoutWithError>,
         default_mode: InputMode,
@@ -256,6 +261,7 @@ impl WasmBridge {
             cached_plugin_map: HashMap::new(),
             pending_pipes: Default::default(),
             layout_dir,
+            layout_path,
             available_layouts,
             available_layout_errors,
             default_mode,
@@ -599,7 +605,13 @@ impl WasmBridge {
         Ok(())
     }
     pub fn reload_plugin_with_id(&mut self, plugin_id: u32) -> Result<()> {
-        self.reload_plugin_with_id_and_config(plugin_id, None)
+        // if this session was started from a layout file, re-read it from disk so that any config
+        // changes the user made to this plugin's config block are applied on reload (issue #3994).
+        // If we can't unambiguously determine a fresh config, pass None and behavior is unchanged.
+        let fresh_config = self
+            .run_plugin_of_plugin_id(plugin_id)
+            .and_then(|run_plugin| self.fresh_config_from_layout(&run_plugin.location));
+        self.reload_plugin_with_id_and_config(plugin_id, fresh_config)
     }
     pub fn reload_plugin_with_id_and_config(
         &mut self,
@@ -1528,6 +1540,90 @@ impl WasmBridge {
             .lock()
             .unwrap()
             .run_plugin_of_plugin_id(plugin_id)
+    }
+
+    // Re-reads the layout file this session was started with (the `--layout` argument) from disk
+    // and returns the fresh `PluginUserConfiguration` for the plugin at the given location, if it
+    // can be unambiguously determined. Used on plugin reload so that edits to the layout file's
+    // plugin config block are picked up (issue #3994).
+    //
+    // Returns `None` (leaving the in-memory config untouched) when:
+    //   - no layout file was used to start the session
+    //   - the layout file cannot be re-parsed from disk
+    //   - the location does not appear in the layout
+    //   - the location appears MORE THAN ONCE with differing configurations (ambiguous: we can't
+    //     know which pane's config the user intends, so we honestly decline to override)
+    fn fresh_config_from_layout(
+        &self,
+        location: &RunPluginLocation,
+    ) -> Option<PluginUserConfiguration> {
+        let layout_path = self.layout_path.as_ref()?;
+        let layout = match Layout::from_path_or_default_without_config(
+            Some(layout_path),
+            self.layout_dir.clone(),
+        ) {
+            Ok(layout) => layout,
+            Err(e) => {
+                log::error!(
+                    "Failed to re-read layout from {} on plugin reload: {}",
+                    layout_path.display(),
+                    e
+                );
+                return None;
+            },
+        };
+
+        // collect every RunPlugin in the layout matching this location, then de-duplicate by
+        // configuration so identical entries don't count as ambiguous
+        let mut distinct_configs: Vec<PluginUserConfiguration> = Self::run_plugins_in_layout(&layout)
+            .into_iter()
+            .filter(|run_plugin| &run_plugin.location == location)
+            .map(|run_plugin| run_plugin.configuration)
+            .collect();
+        distinct_configs.sort_by_key(|c| format!("{:?}", c));
+        distinct_configs.dedup();
+
+        match distinct_configs.len() {
+            0 => None,
+            1 => Some(distinct_configs.into_iter().next().unwrap()),
+            _ => {
+                log::warn!(
+                    "Layout {} contains multiple plugins at location {:?} with differing \
+                     configurations; not overriding config on reload to avoid applying the wrong one",
+                    layout_path.display(),
+                    location
+                );
+                None
+            },
+        }
+    }
+
+    // Walk a parsed layout (template, tabs, and their floating panes) and collect every RunPlugin
+    // it references.
+    fn run_plugins_in_layout(layout: &Layout) -> Vec<RunPlugin> {
+        let mut run_plugins = vec![];
+        let mut collect = |tiled: &zellij_utils::input::layout::TiledPaneLayout,
+                           floating: &[zellij_utils::input::layout::FloatingPaneLayout]| {
+            for run in tiled.extract_run_instructions().into_iter().flatten() {
+                if let Some(run_plugin) = run.get_run_plugin() {
+                    run_plugins.push(run_plugin);
+                }
+            }
+            for floating_pane in floating {
+                if let Some(run) = floating_pane.run.as_ref() {
+                    if let Some(run_plugin) = run.get_run_plugin() {
+                        run_plugins.push(run_plugin);
+                    }
+                }
+            }
+        };
+        if let Some((tiled, floating)) = layout.template.as_ref() {
+            collect(tiled, floating);
+        }
+        for (_name, tiled, floating) in &layout.tabs {
+            collect(tiled, floating);
+        }
+        run_plugins
     }
 
     pub fn reconfigure(

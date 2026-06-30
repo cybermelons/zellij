@@ -2069,6 +2069,13 @@ fn init_session(
                 .layout_dir
                 .clone()
                 .or_else(|| default_layout_dir());
+            // the layout file this session was started with, so plugins can re-read their config
+            // from disk on reload (issue #3994). Only file-based layouts have a re-readable path;
+            // built-in/url/stringified layouts have none.
+            let layout_path = match &cli_assets.layout {
+                Some(LayoutInfo::File(layout_name, _)) => Some(PathBuf::from(layout_name)),
+                _ => None,
+            };
             let background_plugins = config.background_plugins.clone();
             let session_env_vars = session_env_vars.clone();
             move || {
@@ -2078,6 +2085,7 @@ fn init_session(
                     data_dir,
                     layout,
                     layout_dir,
+                    layout_path,
                     available_layouts,
                     available_layout_errors,
                     path_to_default_shell,

@@ -133,7 +133,7 @@ impl KeyShortcut {
 /// - `shared_super`: If set to true, all mode shortcut keybindings share a common modifier (see
 ///   [`get_common_modifier`]) and the modifier belonging to the keybinding is **not** printed in
 ///   the shortcut tile.
-/// - `first_tile`: If set to true, the leading separator for this tile will be ommited so no gap
+/// - `first_tile`: If set to true, the leading separator for this tile will be omitted so no gap
 ///   appears on the screen.
 fn long_mode_shortcut(
     key: &KeyShortcut,
@@ -255,7 +255,7 @@ fn shortened_modifier_shortcut(
 /// - `shared_super`: If set to true, all mode shortcut keybindings share a common modifier (see
 ///   [`get_common_modifier`]) and the modifier belonging to the keybinding is **not** printed in
 ///   the shortcut tile.
-/// - `first_tile`: If set to true, the leading separator for this tile will be ommited so no gap
+/// - `first_tile`: If set to true, the leading separator for this tile will be omitted so no gap
 ///   appears on the screen.
 fn short_mode_shortcut(
     key: &KeyShortcut,
@@ -613,7 +613,7 @@ pub fn first_line(
     separator: &str,
 ) -> LinePart {
     let supports_arrow_fonts = !help.capabilities.arrow_fonts;
-    let colored_elements = color_elements(help.style.colors, !supports_arrow_fonts);
+    let colored_elements = color_elements(help.style.colors, !supports_arrow_fonts, false);
     let binds = &help.get_mode_keybinds();
     // Unselect all by default
     let mut default_keys = vec![
@@ -755,7 +755,7 @@ mod tests {
 
     fn colored_elements() -> ColoredElements {
         let palette = Styling::default();
-        color_elements(palette, false)
+        color_elements(palette, false, false)
     }
 
     // Strip style information from `LinePart` and return a raw String instead

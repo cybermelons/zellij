@@ -37,8 +37,8 @@ use zellij_utils::data::{
     OpenPluginPaneFloatingResponse, OpenTerminalFloatingNearPluginResponse,
     OpenTerminalFloatingResponse, OpenTerminalInPlaceOfPluginResponse, OpenTerminalInPlaceResponse,
     OpenTerminalNearPluginResponse, OpenTerminalPaneInPlaceOfPaneIdResponse, OpenTerminalResponse,
-    OriginatingPlugin, PaneScrollbackResponse, PermissionStatus, PermissionType, PluginPermission,
-    RegexHighlight, RenameLayoutResponse, SaveLayoutResponse, TabMetadata,
+    OriginatingPlugin, PaneFrameStyle, PaneScrollbackResponse, PermissionStatus, PermissionType,
+    PluginPermission, RegexHighlight, RenameLayoutResponse, SaveLayoutResponse, TabMetadata,
 };
 use zellij_utils::home::default_layout_dir;
 use zellij_utils::input::permission::PermissionCache;
@@ -53,7 +53,6 @@ use zellij_utils::web_server_commands::shutdown_all_webserver_instances;
 
 use crate::{panes::PaneId, screen::ScreenInstruction};
 use kdl::KdlDocument;
-use zellij_utils::pane_size::Size;
 
 use prost::Message;
 use zellij_utils::{
@@ -304,6 +303,10 @@ fn host_run_plugin_command(mut caller: Caller<'_, PluginEnv>) {
                     PluginCommand::NewTiledPaneInTab { tab_position } => {
                         new_tiled_pane_in_tab(env, tab_position)
                     },
+                    PluginCommand::ToggleFloatingPanes { tab_id } => {
+                        toggle_floating_panes(env, tab_id)
+                    },
+                    PluginCommand::NewPane => new_pane(env),
                     PluginCommand::GoToNextTab => go_to_next_tab(env),
                     PluginCommand::GoToPreviousTab => go_to_previous_tab(env),
                     PluginCommand::Resize(resize_payload) => resize(env, resize_payload),
@@ -312,6 +315,7 @@ fn host_run_plugin_command(mut caller: Caller<'_, PluginEnv>) {
                     },
                     PluginCommand::FocusNextPane => focus_next_pane(env),
                     PluginCommand::FocusPreviousPane => focus_previous_pane(env),
+                    PluginCommand::FocusLastPane => focus_last_pane(env),
                     PluginCommand::MoveFocus(direction) => move_focus(env, direction),
                     PluginCommand::MoveFocusOrTab(direction) => move_focus_or_tab(env, direction),
                     PluginCommand::Detach => detach(env),
@@ -332,7 +336,12 @@ fn host_run_plugin_command(mut caller: Caller<'_, PluginEnv>) {
                     PluginCommand::PageScrollUp => page_scroll_up(env),
                     PluginCommand::PageScrollDown => page_scroll_down(env),
                     PluginCommand::ToggleFocusFullscreen => toggle_focus_fullscreen(env),
+                    PluginCommand::ToggleFocusNoUiFullscreen => toggle_focus_no_ui_fullscreen(env),
+                    PluginCommand::FocusHostSession => focus_host_session(env),
                     PluginCommand::TogglePaneFrames => toggle_pane_frames(env),
+                    PluginCommand::SetPaneFrameStyle(pane_frame_style) => {
+                        set_pane_frame_style(env, pane_frame_style)
+                    },
                     PluginCommand::TogglePaneEmbedOrEject => toggle_pane_embed_or_eject(env),
                     PluginCommand::UndoRenamePane => undo_rename_pane(env),
                     PluginCommand::CloseFocus => close_focus(env),
@@ -456,13 +465,6 @@ fn host_run_plugin_command(mut caller: Caller<'_, PluginEnv>) {
                     PluginCommand::ListWindowsVolumes => list_windows_volumes(env),
                     PluginCommand::GetSessionList => get_session_list(env),
                     PluginCommand::SetSoftKeyboard(on) => set_soft_keyboard(env, on),
-                    PluginCommand::SetTabFit { tab_id, fit } => set_tab_fit(
-                        env,
-                        tab_id,
-                        fit.map(|(pane_id, size)| (pane_id.into(), size)),
-                    ),
-                    PluginCommand::ExitMobileMode => exit_mobile_mode(env),
-                    PluginCommand::SetShadowFocus(pane_id) => set_shadow_focus(env, pane_id.into()),
                     PluginCommand::DumpSessionLayout { tab_index } => {
                         dump_session_layout(env, tab_index)
                     },
@@ -858,15 +860,6 @@ fn unsubscribe(env: &PluginEnv, event_list: HashSet<EventType>) -> Result<()> {
         .lock()
         .to_anyhow()?
         .retain(|k| !event_list.contains(k));
-    if event_list.contains(&EventType::PaneRenderReportWithAnsi) {
-        let _ = env
-            .senders
-            .send_to_plugin(PluginInstruction::PluginSubscribedToEvents(
-                env.plugin_id,
-                env.client_id,
-                HashSet::new(), // empty set signals a recheck, not a new subscription
-            ));
-    }
     Ok(())
 }
 
@@ -1189,6 +1182,7 @@ fn open_plugin_pane_floating(
         skip_cache: false,
         cwd: Some(env.plugin_cwd.clone()),
         coordinates: floating_pane_coordinates,
+        no_focus: false,
         tab_id: None,
     };
     let error_msg = || format!("Failed to open floating plugin pane");
@@ -1429,6 +1423,7 @@ fn open_file(env: &PluginEnv, file_to_open: FileToOpen, context: BTreeMap<String
         start_suppressed,
         coordinates: None,
         near_current_pane: false,
+        no_focus: false,
         tab_id: None,
     };
     let result = apply_action!(action, error_msg, env);
@@ -1524,6 +1519,7 @@ fn open_file_floating(
         start_suppressed,
         coordinates: floating_pane_coordinates,
         near_current_pane: false,
+        no_focus: false,
         tab_id: None,
     };
     let result = apply_action!(action, error_msg, env);
@@ -1565,6 +1561,7 @@ fn open_file_in_place(
         start_suppressed,
         coordinates: None,
         near_current_pane: false,
+        no_focus: false,
         tab_id: None,
     };
     let result = apply_action!(action, error_msg, env);
@@ -1725,6 +1722,7 @@ fn open_terminal(env: &PluginEnv, cwd: PathBuf) {
         command: run_command_action,
         pane_name: None,
         near_current_pane: false,
+        no_focus: false,
         borderless: None,
         tab_id: None,
     };
@@ -1802,6 +1800,7 @@ fn open_terminal_floating(
         pane_name: None,
         coordinates: floating_pane_coordinates,
         near_current_pane: false,
+        no_focus: false,
         tab_id: None,
     };
     let result = apply_action!(action, error_msg, env);
@@ -1876,6 +1875,7 @@ fn open_terminal_in_place(env: &PluginEnv, cwd: PathBuf) {
         command: run_command_action,
         pane_name: None,
         near_current_pane: false,
+        no_focus: false,
         pane_id_to_replace: None,
         close_replaced_pane: false,
         tab_id: None,
@@ -2162,6 +2162,7 @@ fn open_command_pane(
         command: Some(run_command_action),
         pane_name: name,
         near_current_pane: false,
+        no_focus: false,
         borderless: None,
         tab_id: None,
     };
@@ -2271,6 +2272,7 @@ fn open_command_pane_floating(
         pane_name: name,
         coordinates: floating_pane_coordinates,
         near_current_pane: false,
+        no_focus: false,
         tab_id: None,
     };
     let result = apply_action!(action, error_msg, env);
@@ -2380,6 +2382,7 @@ fn open_command_pane_in_place(
         command: Some(run_command_action),
         pane_name: name,
         near_current_pane: false,
+        no_focus: false,
         pane_id_to_replace: None,
         close_replaced_pane: false,
         tab_id: None,
@@ -2864,6 +2867,7 @@ fn new_tiled_pane_in_tab(env: &PluginEnv, tab_position: usize) {
         command: run_command_action,
         pane_name: None,
         near_current_pane: false,
+        no_focus: false,
         borderless: None,
         tab_id: Some(tab_position),
     };
@@ -2917,6 +2921,12 @@ fn focus_next_pane(env: &PluginEnv) {
 fn focus_previous_pane(env: &PluginEnv) {
     let action = Action::FocusPreviousPane;
     let error_msg = || format!("Failed to focus previous pane");
+    apply_action!(action, error_msg, env);
+}
+
+fn focus_last_pane(env: &PluginEnv) {
+    let action = Action::FocusLastPane;
+    let error_msg = || format!("Failed to focus last pane");
     apply_action!(action, error_msg, env);
 }
 
@@ -3133,9 +3143,33 @@ fn toggle_focus_fullscreen(env: &PluginEnv) {
     apply_action!(action, error_msg, env);
 }
 
+fn toggle_focus_no_ui_fullscreen(env: &PluginEnv) {
+    let error_msg = || {
+        format!(
+            "failed to toggle no-ui full screen in plugin {}",
+            env.name()
+        )
+    };
+    let action = Action::ToggleFocusNoUiFullscreen;
+    apply_action!(action, error_msg, env);
+}
+
+fn focus_host_session(env: &PluginEnv) {
+    env.senders
+        .send_to_screen(ScreenInstruction::FocusHostSession(env.client_id, None))
+        .with_context(|| format!("failed to focus host session from plugin {}", env.name()))
+        .non_fatal();
+}
+
 fn toggle_pane_frames(env: &PluginEnv) {
     let error_msg = || format!("failed to toggle full screen in plugin {}", env.name());
     let action = Action::TogglePaneFrames;
+    apply_action!(action, error_msg, env);
+}
+
+fn set_pane_frame_style(env: &PluginEnv, pane_frame_style: PaneFrameStyle) {
+    let error_msg = || format!("failed to set pane frame style in plugin {}", env.name());
+    let action = Action::SetPaneFrameStyle(pane_frame_style);
     apply_action!(action, error_msg, env);
 }
 
@@ -3147,6 +3181,25 @@ fn toggle_pane_embed_or_eject(env: &PluginEnv) {
         )
     };
     let action = Action::TogglePaneEmbedOrFloating;
+    apply_action!(action, error_msg, env);
+}
+
+fn toggle_floating_panes(env: &PluginEnv, tab_id: Option<u64>) {
+    let error_msg = || format!("failed to toggle floating panes in plugin {}", env.name());
+    let action = match tab_id {
+        Some(id) => Action::ToggleFloatingPanesByTabId { id },
+        None => Action::ToggleFloatingPanes,
+    };
+    apply_action!(action, error_msg, env);
+}
+
+fn new_pane(env: &PluginEnv) {
+    let error_msg = || format!("failed to open new pane in plugin {}", env.name());
+    let action = Action::NewPane {
+        direction: None,
+        pane_name: None,
+        start_suppressed: false,
+    };
     apply_action!(action, error_msg, env);
 }
 
@@ -3988,41 +4041,6 @@ fn set_soft_keyboard(env: &PluginEnv, on: bool) {
         .non_fatal();
 }
 
-fn set_shadow_focus(env: &PluginEnv, pane_id: PaneId) {
-    env.senders
-        .send_to_screen(ScreenInstruction::SetShadowFocus(env.client_id, pane_id))
-        .with_context(|| {
-            format!(
-                "failed to dispatch SetShadowFocus for plugin {}",
-                env.plugin_id
-            )
-        })
-        .non_fatal();
-}
-
-fn set_tab_fit(env: &PluginEnv, tab_id: usize, fit: Option<(PaneId, Size)>) {
-    env.senders
-        .send_to_screen(ScreenInstruction::SetTabFit {
-            client_id: env.client_id,
-            tab_id,
-            fit,
-        })
-        .with_context(|| format!("failed to dispatch SetTabFit for plugin {}", env.plugin_id))
-        .non_fatal();
-}
-
-fn exit_mobile_mode(env: &PluginEnv) {
-    env.senders
-        .send_to_screen(ScreenInstruction::ExitMobileMode(env.client_id, None))
-        .with_context(|| {
-            format!(
-                "failed to dispatch ExitMobileMode for plugin {}",
-                env.plugin_id
-            )
-        })
-        .non_fatal();
-}
-
 #[cfg(windows)]
 fn list_windows_volumes(env: &PluginEnv) {
     let send_plugin_instructions = env.senders.to_plugin.clone();
@@ -4691,9 +4709,9 @@ fn try_edit_layout(
         start_suppressed: false,
         coordinates: None,
         near_current_pane: true,
+        no_focus: false,
         tab_id: None,
     };
-
     // Route the action - this is fallible
     route_action(
         action,
@@ -5485,8 +5503,13 @@ fn check_command_permission(
         | PluginCommand::PageScrollDown
         | PluginCommand::PageScrollDownInPaneId(..)
         | PluginCommand::ToggleFocusFullscreen
+        | PluginCommand::ToggleFocusNoUiFullscreen
+        | PluginCommand::FocusHostSession
         | PluginCommand::TogglePaneIdFullscreen(..)
         | PluginCommand::TogglePaneFrames
+        | PluginCommand::SetPaneFrameStyle(..)
+        | PluginCommand::ToggleFloatingPanes { .. }
+        | PluginCommand::NewPane
         | PluginCommand::TogglePaneEmbedOrEject
         | PluginCommand::TogglePaneEmbedOrEjectForPaneId(..)
         | PluginCommand::UndoRenamePane
@@ -5553,9 +5576,7 @@ fn check_command_permission(
         | PluginCommand::HideFloatingPanes { .. }
         | PluginCommand::SetPaneRegexHighlights(..)
         | PluginCommand::ClearPaneHighlights(..)
-        | PluginCommand::SetSoftKeyboard(..)
-        | PluginCommand::SetTabFit { .. }
-        | PluginCommand::ExitMobileMode => PermissionType::ChangeApplicationState,
+        | PluginCommand::SetSoftKeyboard(..) => PermissionType::ChangeApplicationState,
         PluginCommand::UnblockCliPipeInput(..)
         | PluginCommand::BlockCliPipeInput(..)
         | PluginCommand::CliPipeOutput(..) => PermissionType::ReadCliPipes,

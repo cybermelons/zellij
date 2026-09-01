@@ -1,12 +1,7 @@
 #![cfg(unix)]
 
 use insta::assert_snapshot;
-use zellij_integration_tests::{normalized, Size, TestRunner};
-
-const TERMINAL_SIZE: Size = Size {
-    cols: 120,
-    rows: 24,
-};
+use zellij_integration_tests::{normalized, TestRunner, TERMINAL_SIZE};
 
 fn load_background_plugin_config() -> String {
     let plugin_path = format!(
@@ -27,9 +22,12 @@ fn load_plugins_in_background_on_startup() {
     let terminal = zellij.expect_pty_spawn();
     terminal.output(b"$ ");
 
-    let grid_snapshot = zellij
-        .wait_until("background plugin requests permissions", |grid_snapshot| {
-            grid_snapshot.contains("Allow? (y/n)") && grid_snapshot.tab_bar_appears()
+    let grid_snapshot =
+        zellij.wait_until("background plugin requests permissions", |grid_snapshot| {
+            grid_snapshot.contains("Allow? (y/n)")
+                && grid_snapshot.tab_bar_appears()
+                && grid_snapshot.status_bar_appears()
+                && grid_snapshot.contains("STAGGERED")
         });
     assert_snapshot!(normalized(&grid_snapshot));
     zellij.send_stdin(b"y");

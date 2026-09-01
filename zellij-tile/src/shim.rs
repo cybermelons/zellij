@@ -7,7 +7,6 @@ use std::{
 use zellij_utils::data::*;
 use zellij_utils::errors::prelude::*;
 use zellij_utils::input::actions::Action;
-use zellij_utils::pane_size::Size;
 pub use zellij_utils::plugin_api;
 use zellij_utils::plugin_api::event::ProtobufPaneScrollbackResponse;
 use zellij_utils::plugin_api::generated_api::api::plugin_command::{
@@ -1137,6 +1136,14 @@ pub fn focus_previous_pane() {
     unsafe { host_run_plugin_command() };
 }
 
+/// Change focus to the previously focused pane
+pub fn focus_last_pane() {
+    let plugin_command = PluginCommand::FocusLastPane;
+    let protobuf_plugin_command: ProtobufPluginCommand = plugin_command.try_into().unwrap();
+    object_to_stdout(&protobuf_plugin_command.encode_to_vec());
+    unsafe { host_run_plugin_command() };
+}
+
 /// Change the focused pane in the specified direction
 pub fn move_focus(direction: Direction) {
     let plugin_command = PluginCommand::MoveFocus(direction);
@@ -1284,9 +1291,30 @@ pub fn toggle_focus_fullscreen() {
     unsafe { host_run_plugin_command() };
 }
 
+pub fn toggle_focus_no_ui_fullscreen() {
+    let plugin_command = PluginCommand::ToggleFocusNoUiFullscreen;
+    let protobuf_plugin_command: ProtobufPluginCommand = plugin_command.try_into().unwrap();
+    object_to_stdout(&protobuf_plugin_command.encode_to_vec());
+    unsafe { host_run_plugin_command() };
+}
+
+pub fn focus_host_session() {
+    let plugin_command = PluginCommand::FocusHostSession;
+    let protobuf_plugin_command: ProtobufPluginCommand = plugin_command.try_into().unwrap();
+    object_to_stdout(&protobuf_plugin_command.encode_to_vec());
+    unsafe { host_run_plugin_command() };
+}
+
 /// Toggle the UI pane frames on or off
 pub fn toggle_pane_frames() {
     let plugin_command = PluginCommand::TogglePaneFrames;
+    let protobuf_plugin_command: ProtobufPluginCommand = plugin_command.try_into().unwrap();
+    object_to_stdout(&protobuf_plugin_command.encode_to_vec());
+    unsafe { host_run_plugin_command() };
+}
+
+pub fn set_pane_frame_style(pane_frame_style: PaneFrameStyle) {
+    let plugin_command = PluginCommand::SetPaneFrameStyle(pane_frame_style);
     let protobuf_plugin_command: ProtobufPluginCommand = plugin_command.try_into().unwrap();
     object_to_stdout(&protobuf_plugin_command.encode_to_vec());
     unsafe { host_run_plugin_command() };
@@ -1310,6 +1338,20 @@ pub fn undo_rename_pane() {
 /// Close the focused pane
 pub fn close_focus() {
     let plugin_command = PluginCommand::CloseFocus;
+    let protobuf_plugin_command: ProtobufPluginCommand = plugin_command.try_into().unwrap();
+    object_to_stdout(&protobuf_plugin_command.encode_to_vec());
+    unsafe { host_run_plugin_command() };
+}
+
+pub fn new_pane() {
+    let plugin_command = PluginCommand::NewPane;
+    let protobuf_plugin_command: ProtobufPluginCommand = plugin_command.try_into().unwrap();
+    object_to_stdout(&protobuf_plugin_command.encode_to_vec());
+    unsafe { host_run_plugin_command() };
+}
+
+pub fn toggle_floating_panes(tab_id: Option<u64>) {
+    let plugin_command = PluginCommand::ToggleFloatingPanes { tab_id };
     let protobuf_plugin_command: ProtobufPluginCommand = plugin_command.try_into().unwrap();
     object_to_stdout(&protobuf_plugin_command.encode_to_vec());
     unsafe { host_run_plugin_command() };
@@ -1680,27 +1722,6 @@ pub fn scan_host_folder<S: AsRef<Path>>(folder_to_scan: &S) {
 
 pub fn set_soft_keyboard(on: bool) {
     let plugin_command = PluginCommand::SetSoftKeyboard(on);
-    let protobuf_plugin_command: ProtobufPluginCommand = plugin_command.try_into().unwrap();
-    object_to_stdout(&protobuf_plugin_command.encode_to_vec());
-    unsafe { host_run_plugin_command() };
-}
-
-pub fn set_tab_fit(tab_id: usize, fit: Option<(PaneId, Size)>) {
-    let plugin_command = PluginCommand::SetTabFit { tab_id, fit };
-    let protobuf_plugin_command: ProtobufPluginCommand = plugin_command.try_into().unwrap();
-    object_to_stdout(&protobuf_plugin_command.encode_to_vec());
-    unsafe { host_run_plugin_command() };
-}
-
-pub fn exit_mobile_mode() {
-    let plugin_command = PluginCommand::ExitMobileMode;
-    let protobuf_plugin_command: ProtobufPluginCommand = plugin_command.try_into().unwrap();
-    object_to_stdout(&protobuf_plugin_command.encode_to_vec());
-    unsafe { host_run_plugin_command() };
-}
-
-pub fn set_shadow_focus(pane_id: PaneId) {
-    let plugin_command = PluginCommand::SetShadowFocus(pane_id);
     let protobuf_plugin_command: ProtobufPluginCommand = plugin_command.try_into().unwrap();
     object_to_stdout(&protobuf_plugin_command.encode_to_vec());
     unsafe { host_run_plugin_command() };

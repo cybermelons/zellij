@@ -1,16 +1,10 @@
 #![cfg(unix)]
 
 use insta::assert_snapshot;
-use zellij_integration_tests::{keys, normalized, FakePtyHandle, Size, TestRunner, TestSession};
-
-const TERMINAL_SIZE: Size = Size {
-    cols: 120,
-    rows: 24,
+use zellij_integration_tests::{
+    claim_first_terminal_and_wait_for_prompt, col, keys, normalized,
+    split_right_and_wait_for_prompt, Size, TestRunner, PROMPT, TERMINAL_SIZE,
 };
-const PROMPT: &[u8] = b"$ ";
-const PROMPT_ROW: usize = 2;
-const FIRST_PANE_PROMPT_X: usize = 3;
-const RIGHT_PANE_PROMPT_X: usize = 63;
 
 const CHANGED_KEYS_CONFIG: &str = r#"
 keybinds clear-defaults=true {
@@ -27,38 +21,12 @@ keybinds clear-defaults=true {
 }
 "#;
 
-fn claim_first_terminal_and_wait_for_prompt(zellij: &TestSession) -> FakePtyHandle {
-    let terminal = zellij.expect_pty_spawn();
-    terminal.output(PROMPT);
-    zellij.wait_until(
-        "first terminal prompt rendered in loaded app",
-        |grid_snapshot| {
-            grid_snapshot.tab_bar_appears()
-                && grid_snapshot.status_bar_appears()
-                && grid_snapshot.cursor_is_at(FIRST_PANE_PROMPT_X, PROMPT_ROW)
-        },
-    );
-    terminal
-}
-
-fn split_right_and_wait_for_prompt(zellij: &TestSession) -> FakePtyHandle {
-    zellij.send_stdin(&keys::PANE_MODE);
-    zellij.send_stdin(&keys::SPLIT_RIGHT_IN_PANE_MODE);
-    let terminal = zellij.expect_pty_spawn();
-    terminal.output(PROMPT);
-    zellij.wait_until("right terminal prompt rendered", |grid_snapshot| {
-        grid_snapshot.status_bar_appears()
-            && grid_snapshot.cursor_is_at(RIGHT_PANE_PROMPT_X, PROMPT_ROW)
-    });
-    terminal
-}
-
 #[test]
 fn exit_zellij() {
     let zellij = TestRunner::new(TERMINAL_SIZE).start();
     claim_first_terminal_and_wait_for_prompt(&zellij);
 
-    zellij.send_stdin(&keys::QUIT);
+    zellij.send_stdin(&keys::ctrl('q'));
 
     zellij.wait_until("zellij said goodbye", |grid_snapshot| {
         !grid_snapshot.status_bar_appears() && grid_snapshot.contains("Bye from Zellij!")
@@ -86,10 +54,38 @@ fn resize_terminal_window() {
         zellij.wait_until("app re-rendered at the new window size", |grid_snapshot| {
             grid_snapshot.contains("Ctrl +")
                 && grid_snapshot.tab_bar_appears()
-                && grid_snapshot.cursor_is_at(53, PROMPT_ROW)
+                && grid_snapshot.cursor_is_at(col(52).row(2))
         });
     assert_snapshot!(normalized(&grid_snapshot));
     zellij.quit();
+}
+
+#[test]
+fn resize_re_queries_pixel_sizes() {
+    let mut zellij = TestRunner::new(TERMINAL_SIZE).start();
+    claim_first_terminal_and_wait_for_prompt(&zellij);
+
+    zellij.wait_until_raw_output("startup pixel size query", |bytes| {
+        count_pixel_size_queries(bytes) == 1
+    });
+
+    zellij.resize(Size {
+        cols: 100,
+        rows: 24,
+    });
+
+    zellij.wait_until_raw_output("pixel size re-query after resize", |bytes| {
+        count_pixel_size_queries(bytes) >= 2
+    });
+    zellij.quit();
+}
+
+fn count_pixel_size_queries(client_stdout_bytes: &[u8]) -> usize {
+    let pixel_size_query = b"\x1b[14t\x1b[16t";
+    client_stdout_bytes
+        .windows(pixel_size_query.len())
+        .filter(|window| window == pixel_size_query)
+        .count()
 }
 
 #[test]
@@ -102,10 +98,7 @@ fn status_bar_loads_custom_keybindings() {
 
     let grid_snapshot = zellij.wait_until(
         "status bar reflects the custom keybindings",
-        |grid_snapshot| {
-            grid_snapshot.cursor_is_at(FIRST_PANE_PROMPT_X, PROMPT_ROW)
-                && grid_snapshot.contains("LOCK")
-        },
+        |grid_snapshot| grid_snapshot.cursor_is_at(col(2).row(1)) && grid_snapshot.contains("LOCK"),
     );
     assert_snapshot!(normalized(&grid_snapshot));
 }
@@ -126,6 +119,7 @@ fn use_custom_layout_with_relative_path() {
 
     let grid_snapshot = zellij.wait_until("upside-down layout loaded from disk", |grid_snapshot| {
         grid_snapshot.tab_bar_appears()
+            && grid_snapshot.status_bar_appears()
             && grid_snapshot.contains("Zellij (test")
             && grid_snapshot.cursor.is_some()
     });
@@ -142,8 +136,8 @@ fn edit_scrollback() {
         grid_snapshot.contains("SCROLLBACK_MARKER_TWO")
     });
 
-    zellij.send_stdin(&keys::SCROLL_MODE);
-    zellij.send_stdin(&keys::EDIT_SCROLLBACK);
+    zellij.send_stdin(&keys::ctrl('s'));
+    zellij.send_stdin(&keys::key('e'));
     zellij.expect_pty_spawn();
 
     let grid_snapshot = zellij.wait_until("scrollback editor pane open", |grid_snapshot| {

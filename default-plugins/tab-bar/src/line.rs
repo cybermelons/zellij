@@ -547,7 +547,7 @@ pub fn ribbon_as_line_part(
     let part = serialize_ribbon(&ribbon_text);
     let mut len = text.width() + 2;
     if supports_arrow_fonts {
-        len += 2;
+        len += 1;
     };
     LinePart {
         part,

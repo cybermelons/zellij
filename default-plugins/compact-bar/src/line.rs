@@ -621,7 +621,7 @@ impl RightSideElementsBuilder {
 
         LinePart {
             part: format!("{} {}", serialize_text(&key), serialize_ribbon(&ribbon)),
-            len: key_text.chars().count() + ribbon_text.chars().count() + 6,
+            len: key_text.chars().count() + ribbon_text.chars().count() + 5,
             tab_index: None,
         }
     }

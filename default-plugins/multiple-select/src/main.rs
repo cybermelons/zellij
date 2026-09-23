@@ -562,12 +562,12 @@ fn group_controls_length(mode_info: &ModeInfo) -> usize {
 
     if pane_group_bound {
         let toggle_text = format!("<{}> Toggle", pane_group_key);
-        length += toggle_text.chars().count() + 4;
+        length += toggle_text.chars().count() + 3;
     }
 
     if group_mark_bound {
         let follow_text = format!("<{}> Follow Focus", group_mark_key);
-        length += follow_text.chars().count() + 4;
+        length += follow_text.chars().count() + 3;
     }
 
     length
@@ -691,5 +691,5 @@ fn render_toggle_group_ribbon(pane_group_key: &str, base_x: usize, base_y: usize
         None,
     );
 
-    base_x + toggle_text.len() + 4
+    base_x + toggle_text.len() + 3
 }

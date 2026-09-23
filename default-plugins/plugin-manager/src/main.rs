@@ -294,7 +294,7 @@ impl NewPluginScreen {
         );
         print_ribbon_with_coordinates(
             load_in_foreground_ribbon,
-            key_shortcuts_text.chars().count() + 1 + load_in_background_text.chars().count() + 4,
+            key_shortcuts_text.chars().count() + 1 + load_in_background_text.chars().count() + 3,
             y_coordinates,
             None,
             None,

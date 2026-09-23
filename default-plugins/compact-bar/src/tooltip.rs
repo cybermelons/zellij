@@ -22,7 +22,7 @@ impl<'a> TooltipRenderer<'a> {
             for (text, ribbon, x, y) in text_components {
                 let text_width = text.content().chars().count();
                 let ribbon_content_width = ribbon.content().chars().count();
-                let ribbon_total_width = ribbon_content_width + 4;
+                let ribbon_total_width = ribbon_content_width + 3;
                 let total_element_width = text_width + ribbon_total_width + 1;
 
                 // Check if this element would exceed the available columns and render an ellipses

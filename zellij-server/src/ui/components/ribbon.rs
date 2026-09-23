@@ -25,7 +25,7 @@ pub fn ribbon(
             character_style(declaration.background, background),
         );
         let (left_cap, right_cap, padding) = if arrow_fonts {
-            (LEFT_CAP, RIGHT_CAP, Some(4))
+            (LEFT_CAP, RIGHT_CAP, Some(3))
         } else {
             ("", "", None)
         };
@@ -41,7 +41,7 @@ pub fn ribbon(
             .map(|c| c.to_string())
             .unwrap_or_else(|| String::new());
         stringified.push_str(&format!(
-            "{}{}{}{} {} {}{}{}",
+            "{}{}{}{}{}{}{}{}{}",
             RESET_STYLES,
             first_arrow_styles,
             left_cap,
@@ -49,6 +49,7 @@ pub fn ribbon(
             text,
             last_arrow_styles,
             right_cap,
+            gap_cell(background, arrow_fonts),
             RESET_STYLES
         ));
         return stringified.as_bytes().to_vec();
@@ -65,7 +66,7 @@ pub fn ribbon(
     );
 
     let (left_cap, right_cap, padding) = if arrow_fonts {
-        (LEFT_CAP, RIGHT_CAP, Some(4))
+        (LEFT_CAP, RIGHT_CAP, Some(3))
     } else {
         ("", "", None)
     };
@@ -82,7 +83,7 @@ pub fn ribbon(
         .map(|c| c.to_string())
         .unwrap_or_else(|| String::new());
     stringified.push_str(&format!(
-        "{}{}{}{} {} {}{}{}",
+        "{}{}{}{}{}{}{}{}{}",
         RESET_STYLES,
         first_arrow_styles,
         left_cap,
@@ -90,6 +91,7 @@ pub fn ribbon(
         text,
         last_arrow_styles,
         right_cap,
+        gap_cell(background, arrow_fonts),
         RESET_STYLES
     ));
     stringified.as_bytes().to_vec()
@@ -100,4 +102,18 @@ fn character_style(foreground: PaletteColor, background: PaletteColor) -> Charac
         .foreground(Some(foreground.into()))
         .background(Some(background.into()))
         .bold(Some(AnsiCode::On))
+}
+
+/// One bar-background cell appended after a ribbon so neighbouring ribbons
+/// read as separate bubbles instead of touching cap-to-cap. Only meaningful
+/// with round caps (arrow_fonts); the plain-text fallback is unchanged.
+fn gap_cell(bar_background: PaletteColor, arrow_fonts: bool) -> String {
+    if arrow_fonts {
+        format!(
+            "{} ",
+            character_style(bar_background, bar_background)
+        )
+    } else {
+        String::new()
+    }
 }

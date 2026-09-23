@@ -1063,8 +1063,8 @@ pub fn render_screen_toggle(
         ("New", "Attach", "Resurrect")
     };
     let key_indication_len = key_indication_text.chars().count() + 1;
-    let first_ribbon_length = new_session_text.chars().count() + 4;
-    let second_ribbon_length = running_sessions_text.chars().count() + 4;
+    let first_ribbon_length = new_session_text.chars().count() + 3;
+    let second_ribbon_length = running_sessions_text.chars().count() + 3;
     let key_indication_x = x;
     let first_ribbon_x = key_indication_x + key_indication_len;
     let second_ribbon_x = first_ribbon_x + first_ribbon_length;

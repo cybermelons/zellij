@@ -1421,7 +1421,7 @@ fn add_shortcut(
     ret.part = format!("{}{}", ret.part, ribbon);
     let supports_arrow_fonts = !help.capabilities.arrow_fonts;
     ret.len += if supports_arrow_fonts {
-        text.width() + 4 // padding and arrow fonts
+        text.width() + 3 // padding and arrow fonts
     } else {
         text.width() + 2 // padding
     };
@@ -1483,7 +1483,7 @@ fn add_shortcut_with_inline_key(
     ret.part = ribbon;
     let supports_arrow_fonts = !capabilities.arrow_fonts;
     ret.len += if supports_arrow_fonts {
-        text.width() + key_string.width() + 7 // padding, group boundaries and arrow fonts
+        text.width() + key_string.width() + 6 // padding, group boundaries and arrow fonts
     } else {
         text.width() + key_string.width() + 5 // padding and group boundaries
     };
@@ -1523,7 +1523,7 @@ fn add_shortcut_with_key_only(
     ret.part = ribbon;
     let supports_arrow_fonts = !help.capabilities.arrow_fonts;
     ret.len += if supports_arrow_fonts {
-        key_string.width() + 4 // 4 => arrow fonts + padding
+        key_string.width() + 3 // 3 => arrow fonts + padding
     } else {
         key_string.width() + 2 // 2 => padding
     };

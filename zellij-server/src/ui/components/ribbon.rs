@@ -2,7 +2,8 @@ use super::{text::stringify_text, Coordinates, Text};
 use crate::panes::terminal_character::{AnsiCode, CharacterStyles, RESET_STYLES};
 use zellij_utils::data::{PaletteColor, Style};
 
-static ARROW_SEPARATOR: &str = "";
+static LEFT_CAP: &str = "";
+static RIGHT_CAP: &str = "";
 
 pub fn ribbon(
     content: Text,
@@ -16,17 +17,17 @@ pub fn ribbon(
         let declaration = colors.ribbon_unselected;
         let disabled_content = content.into_disabled();
         let (first_arrow_styles, text_style, last_arrow_styles) = (
-            character_style(background, declaration.background),
+            character_style(declaration.background, background),
             RESET_STYLES
                 .foreground(Some(declaration.base.into()))
                 .background(Some(declaration.background.into()))
                 .italic(Some(AnsiCode::On)),
             character_style(declaration.background, background),
         );
-        let (arrow, padding) = if arrow_fonts {
-            (ARROW_SEPARATOR, Some(4))
+        let (left_cap, right_cap, padding) = if arrow_fonts {
+            (LEFT_CAP, RIGHT_CAP, Some(4))
         } else {
-            ("", None)
+            ("", "", None)
         };
         let (text, _text_width) = stringify_text(
             &disabled_content,
@@ -43,11 +44,11 @@ pub fn ribbon(
             "{}{}{}{} {} {}{}{}",
             RESET_STYLES,
             first_arrow_styles,
-            arrow,
+            left_cap,
             text_style,
             text,
             last_arrow_styles,
-            arrow,
+            right_cap,
             RESET_STYLES
         ));
         return stringified.as_bytes().to_vec();
@@ -58,15 +59,15 @@ pub fn ribbon(
         colors.ribbon_unselected
     };
     let (first_arrow_styles, text_style, last_arrow_styles) = (
-        character_style(background, declaration.background),
+        character_style(declaration.background, background),
         character_style(declaration.base, declaration.background),
         character_style(declaration.background, background),
     );
 
-    let (arrow, padding) = if arrow_fonts {
-        (ARROW_SEPARATOR, Some(4))
+    let (left_cap, right_cap, padding) = if arrow_fonts {
+        (LEFT_CAP, RIGHT_CAP, Some(4))
     } else {
-        ("", None)
+        ("", "", None)
     };
 
     let (text, _text_width) = stringify_text(
@@ -84,11 +85,11 @@ pub fn ribbon(
         "{}{}{}{} {} {}{}{}",
         RESET_STYLES,
         first_arrow_styles,
-        arrow,
+        left_cap,
         text_style,
         text,
         last_arrow_styles,
-        arrow,
+        right_cap,
         RESET_STYLES
     ));
     stringified.as_bytes().to_vec()

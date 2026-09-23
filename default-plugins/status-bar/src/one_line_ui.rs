@@ -1594,8 +1594,8 @@ fn add_keygroup_separator(help: &ModeInfo, max_len: usize) -> Option<LinePart> {
     }
     bits.push(
         Style::new()
-            .fg(bg_color)
-            .on(separator_color)
+            .fg(separator_color)
+            .on(bg_color)
             .bold()
             .paint(format!("{}", left_separator)),
     );
@@ -1608,8 +1608,8 @@ fn add_keygroup_separator(help: &ModeInfo, max_len: usize) -> Option<LinePart> {
     );
     bits.push(
         Style::new()
-            .fg(bg_color)
-            .on(separator_color)
+            .fg(separator_color)
+            .on(bg_color)
             .bold()
             .paint(format!("{}", right_separator)),
     );

@@ -128,8 +128,8 @@ impl KeyShortcut {
 ///   action it belongs to (roughly equivalent to [`InputMode`]s) and the keybinding to trigger
 ///   this action.
 /// - `palette`: A structure holding styling information.
-/// - `separator`: The separator printed before and after the mode shortcut tile. The default is an
-///   arrow head-like separator.
+/// - `left_separator`/`right_separator`: The separators printed before and after the mode
+///   shortcut tile. The default is a round cap-like separator.
 /// - `shared_super`: If set to true, all mode shortcut keybindings share a common modifier (see
 ///   [`get_common_modifier`]) and the modifier belonging to the keybinding is **not** printed in
 ///   the shortcut tile.
@@ -138,7 +138,8 @@ impl KeyShortcut {
 fn long_mode_shortcut(
     key: &KeyShortcut,
     palette: ColoredElements,
-    separator: &str,
+    left_separator: &str,
+    right_separator: &str,
     common_modifiers: &Vec<KeyModifier>,
     first_tile: bool,
 ) -> LinePart {
@@ -156,17 +157,21 @@ fn long_mode_shortcut(
         KeyMode::Selected => palette.selected,
         KeyMode::Disabled => palette.disabled,
     };
-    let start_separator = if !has_common_modifiers && first_tile {
-        ""
+    // Round caps don't interlock like arrows: cap every tile's left edge and
+    // leave a one-cell gap between neighbouring bubbles.
+    let start_separator = if left_separator.is_empty() {
+        String::new()
+    } else if first_tile && !has_common_modifiers {
+        left_separator.to_string()
     } else {
-        separator
+        format!(" {}", left_separator)
     };
-    let prefix_separator = colors.prefix_separator.paint(start_separator);
+    let prefix_separator = colors.prefix_separator.paint(start_separator.clone());
     let char_left_separator = colors.char_left_separator.paint(" <".to_string());
     let char_shortcut = colors.char_shortcut.paint(key_binding.to_string());
     let char_right_separator = colors.char_right_separator.paint("> ".to_string());
     let styled_text = colors.styled_text.paint(format!("{} ", key_hint));
-    let suffix_separator = colors.suffix_separator.paint(separator);
+    let suffix_separator = colors.suffix_separator.paint(right_separator);
     LinePart {
         part: ANSIStrings(&[
             prefix_separator,
@@ -183,14 +188,15 @@ fn long_mode_shortcut(
             + 2                              // "> "
             + key_hint.chars().count()       // Key hint (mode)
             + 1                              // " "
-            + separator.chars().count(), // Separator
+            + right_separator.chars().count(), // Separator
     }
 }
 
 fn shortened_modifier_shortcut(
     key: &KeyShortcut,
     palette: ColoredElements,
-    separator: &str,
+    left_separator: &str,
+    right_separator: &str,
     common_modifiers: &Vec<KeyModifier>,
     first_tile: bool,
 ) -> LinePart {
@@ -208,17 +214,21 @@ fn shortened_modifier_shortcut(
         KeyMode::Selected => palette.selected,
         KeyMode::Disabled => palette.disabled,
     };
-    let start_separator = if !has_common_modifiers && first_tile {
-        ""
+    // Round caps don't interlock like arrows: cap every tile's left edge and
+    // leave a one-cell gap between neighbouring bubbles.
+    let start_separator = if left_separator.is_empty() {
+        String::new()
+    } else if first_tile && !has_common_modifiers {
+        left_separator.to_string()
     } else {
-        separator
+        format!(" {}", left_separator)
     };
-    let prefix_separator = colors.prefix_separator.paint(start_separator);
+    let prefix_separator = colors.prefix_separator.paint(start_separator.clone());
     let char_left_separator = colors.char_left_separator.paint(" <".to_string());
     let char_shortcut = colors.char_shortcut.paint(key_binding.to_string());
     let char_right_separator = colors.char_right_separator.paint("> ".to_string());
     let styled_text = colors.styled_text.paint(format!("{} ", key_hint));
-    let suffix_separator = colors.suffix_separator.paint(separator);
+    let suffix_separator = colors.suffix_separator.paint(right_separator);
     LinePart {
         part: ANSIStrings(&[
             prefix_separator,
@@ -235,7 +245,7 @@ fn shortened_modifier_shortcut(
             + 2                              // "> "
             + key_hint.chars().count()       // Key hint (mode)
             + 1                              // " "
-            + separator.chars().count(), // Separator
+            + right_separator.chars().count(), // Separator
     }
 }
 
@@ -250,8 +260,8 @@ fn shortened_modifier_shortcut(
 ///   action it belongs to (roughly equivalent to [`InputMode`]s) and the keybinding to trigger
 ///   this action.
 /// - `palette`: A structure holding styling information.
-/// - `separator`: The separator printed before and after the mode shortcut tile. The default is an
-///   arrow head-like separator.
+/// - `left_separator`/`right_separator`: The separators printed before and after the mode
+///   shortcut tile. The default is a round cap-like separator.
 /// - `shared_super`: If set to true, all mode shortcut keybindings share a common modifier (see
 ///   [`get_common_modifier`]) and the modifier belonging to the keybinding is **not** printed in
 ///   the shortcut tile.
@@ -260,7 +270,8 @@ fn shortened_modifier_shortcut(
 fn short_mode_shortcut(
     key: &KeyShortcut,
     palette: ColoredElements,
-    separator: &str,
+    left_separator: &str,
+    right_separator: &str,
     common_modifiers: &Vec<KeyModifier>,
     first_tile: bool,
 ) -> LinePart {
@@ -277,21 +288,25 @@ fn short_mode_shortcut(
         KeyMode::Selected => palette.selected,
         KeyMode::Disabled => palette.disabled,
     };
-    let start_separator = if !has_common_modifiers && first_tile {
-        ""
+    // Round caps don't interlock like arrows: cap every tile's left edge and
+    // leave a one-cell gap between neighbouring bubbles.
+    let start_separator = if left_separator.is_empty() {
+        String::new()
+    } else if first_tile && !has_common_modifiers {
+        left_separator.to_string()
     } else {
-        separator
+        format!(" {}", left_separator)
     };
-    let prefix_separator = colors.prefix_separator.paint(start_separator);
+    let prefix_separator = colors.prefix_separator.paint(start_separator.clone());
     let char_shortcut = colors.char_shortcut.paint(format!(" {} ", key_binding));
-    let suffix_separator = colors.suffix_separator.paint(separator);
+    let suffix_separator = colors.suffix_separator.paint(right_separator);
     LinePart {
         part: ANSIStrings(&[prefix_separator, char_shortcut, suffix_separator]).to_string(),
-        len: separator.chars().count()      // Separator
+        len: start_separator.chars().count() // Separator
             + 1                             // " "
             + key_binding.chars().count()   // Key binding
             + 1                             // " "
-            + separator.chars().count(), // Separator
+            + right_separator.chars().count(), // Separator
     }
 }
 
@@ -299,14 +314,22 @@ fn key_indicators(
     max_len: usize,
     keys: &[KeyShortcut],
     palette: ColoredElements,
-    separator: &str,
+    left_separator: &str,
+    right_separator: &str,
     mode_info: &ModeInfo,
 ) -> LinePart {
     // Print full-width hints
-    let (shared_modifiers, mut line_part) = superkey(palette, separator, mode_info);
+    let (shared_modifiers, mut line_part) = superkey(palette, right_separator, mode_info);
     for key in keys {
         let line_empty = line_part.len == 0;
-        let key = long_mode_shortcut(key, palette, separator, &shared_modifiers, line_empty);
+        let key = long_mode_shortcut(
+            key,
+            palette,
+            left_separator,
+            right_separator,
+            &shared_modifiers,
+            line_empty,
+        );
         line_part.part = format!("{}{}", line_part.part, key.part);
         line_part.len += key.len;
     }
@@ -315,11 +338,17 @@ fn key_indicators(
     }
 
     // Full-width doesn't fit, try shortened modifiers (eg. "^C" instead of "Ctrl")
-    line_part = superkey(palette, separator, mode_info).1;
+    line_part = superkey(palette, right_separator, mode_info).1;
     for key in keys {
         let line_empty = line_part.len == 0;
-        let key =
-            shortened_modifier_shortcut(key, palette, separator, &shared_modifiers, line_empty);
+        let key = shortened_modifier_shortcut(
+            key,
+            palette,
+            left_separator,
+            right_separator,
+            &shared_modifiers,
+            line_empty,
+        );
         line_part.part = format!("{}{}", line_part.part, key.part);
         line_part.len += key.len;
     }
@@ -328,10 +357,17 @@ fn key_indicators(
     }
 
     // Full-width doesn't fit, try shortened hints (just keybindings, no meanings/actions)
-    line_part = superkey(palette, separator, mode_info).1;
+    line_part = superkey(palette, right_separator, mode_info).1;
     for key in keys {
         let line_empty = line_part.len == 0;
-        let key = short_mode_shortcut(key, palette, separator, &shared_modifiers, line_empty);
+        let key = short_mode_shortcut(
+            key,
+            palette,
+            left_separator,
+            right_separator,
+            &shared_modifiers,
+            line_empty,
+        );
         line_part.part = format!("{}{}", line_part.part, key.part);
         line_part.len += key.len;
     }
@@ -367,7 +403,8 @@ fn swap_layout_status(
     is_swap_layout_damaged: bool,
     mode_info: &ModeInfo,
     colored_elements: ColoredElements,
-    separator: &str,
+    left_separator: &str,
+    right_separator: &str,
 ) -> Option<LinePart> {
     match swap_layout_name {
         Some(swap_layout_name) => {
@@ -382,7 +419,7 @@ fn swap_layout_status(
                         colored_elements
                             .$style_name
                             .prefix_separator
-                            .paint(separator),
+                            .paint(left_separator),
                         colored_elements
                             .$style_name
                             .styled_text
@@ -390,7 +427,7 @@ fn swap_layout_status(
                         colored_elements
                             .$style_name
                             .suffix_separator
-                            .paint(separator),
+                            .paint(right_separator),
                     )
                 }};
             }
@@ -610,7 +647,8 @@ pub fn first_line(
     help: &ModeInfo,
     tab_info: Option<&TabInfo>,
     max_len: usize,
-    separator: &str,
+    left_separator: &str,
+    right_separator: &str,
 ) -> LinePart {
     let supports_arrow_fonts = !help.capabilities.arrow_fonts;
     let colored_elements = color_elements(help.style.colors, !supports_arrow_fonts, false);
@@ -715,8 +753,14 @@ pub fn first_line(
         ));
     }
 
-    let mut key_indicators =
-        key_indicators(max_len, &default_keys, colored_elements, separator, help);
+    let mut key_indicators = key_indicators(
+        max_len,
+        &default_keys,
+        colored_elements,
+        left_separator,
+        right_separator,
+        help,
+    );
     if key_indicators.len < max_len {
         if let Some(tab_info) = tab_info {
             let mut remaining_space = max_len - key_indicators.len;
@@ -726,7 +770,8 @@ pub fn first_line(
                 tab_info.is_swap_layout_dirty,
                 help,
                 colored_elements,
-                separator,
+                left_separator,
+                right_separator,
             ) {
                 remaining_space -= swap_layout_status.len;
                 for _ in 0..remaining_space {
@@ -777,7 +822,7 @@ mod tests {
         );
         let color = colored_elements();
 
-        let ret = long_mode_shortcut(&key, color, "+", &vec![], false);
+        let ret = long_mode_shortcut(&key, color, "+", "+", &vec![], false);
         let ret = unstyle(ret);
 
         assert_eq!(ret, "+ <0> SESSION +".to_string());
@@ -793,7 +838,7 @@ mod tests {
         );
         let color = colored_elements();
 
-        let ret = long_mode_shortcut(&key, color, "+", &vec![], false);
+        let ret = long_mode_shortcut(&key, color, "+", "+", &vec![], false);
         let ret = unstyle(ret);
 
         assert_eq!(ret, "+ <0> SESSION +".to_string());
@@ -809,7 +854,7 @@ mod tests {
         );
         let color = colored_elements();
 
-        let ret = long_mode_shortcut(&key, color, "+", &vec![], false);
+        let ret = long_mode_shortcut(&key, color, "+", "+", &vec![], false);
         let ret = unstyle(ret);
 
         assert_eq!(ret, "+ <0> SESSION +".to_string());
@@ -821,7 +866,7 @@ mod tests {
         let key = KeyShortcut::new(KeyMode::Selected, KeyAction::Session, None);
         let color = colored_elements();
 
-        let ret = long_mode_shortcut(&key, color, "+", &vec![], false);
+        let ret = long_mode_shortcut(&key, color, "+", "+", &vec![], false);
         let ret = unstyle(ret);
 
         assert_eq!(ret, "".to_string());
@@ -837,7 +882,7 @@ mod tests {
         );
         let color = colored_elements();
 
-        let ret = long_mode_shortcut(&key, color, "+", &vec![], true);
+        let ret = long_mode_shortcut(&key, color, "+", "+", &vec![], true);
         let ret = unstyle(ret);
 
         assert_eq!(ret, " <0> SESSION +".to_string());
@@ -853,7 +898,7 @@ mod tests {
         );
         let color = colored_elements();
 
-        let ret = long_mode_shortcut(&key, color, "+", &vec![KeyModifier::Ctrl], false);
+        let ret = long_mode_shortcut(&key, color, "+", "+", &vec![KeyModifier::Ctrl], false);
         let ret = unstyle(ret);
 
         assert_eq!(ret, "+ <0> SESSION +".to_string());
@@ -869,7 +914,7 @@ mod tests {
         );
         let color = colored_elements();
 
-        let ret = long_mode_shortcut(&key, color, "+", &vec![], false);
+        let ret = long_mode_shortcut(&key, color, "+", "+", &vec![], false);
         let ret = unstyle(ret);
 
         assert_eq!(ret, "+ <Ctrl 0> SESSION +".to_string());
@@ -885,7 +930,7 @@ mod tests {
         );
         let color = colored_elements();
 
-        let ret = long_mode_shortcut(&key, color, "+", &vec![], false);
+        let ret = long_mode_shortcut(&key, color, "+", "+", &vec![], false);
         let ret = unstyle(ret);
 
         assert_eq!(ret, "+ <0> SESSION +".to_string());
@@ -897,7 +942,7 @@ mod tests {
         let key = KeyShortcut::new(KeyMode::Disabled, KeyAction::Session, None);
         let color = colored_elements();
 
-        let ret = long_mode_shortcut(&key, color, "+", &vec![], false);
+        let ret = long_mode_shortcut(&key, color, "+", "+", &vec![], false);
         let ret = unstyle(ret);
 
         assert_eq!(ret, "+ <> SESSION +".to_string());
@@ -915,7 +960,7 @@ mod tests {
         );
         let color = colored_elements();
 
-        let ret = long_mode_shortcut(&key, color, "+", &vec![KeyModifier::Ctrl], true);
+        let ret = long_mode_shortcut(&key, color, "+", "+", &vec![KeyModifier::Ctrl], true);
         let ret = unstyle(ret);
 
         assert_eq!(ret, "+ <0> SESSION +".to_string());
@@ -930,7 +975,7 @@ mod tests {
         );
         let color = colored_elements();
 
-        let ret = short_mode_shortcut(&key, color, "+", &vec![], false);
+        let ret = short_mode_shortcut(&key, color, "+", "+", &vec![], false);
         let ret = unstyle(ret);
 
         assert_eq!(ret, "+ 0 +".to_string());
@@ -945,7 +990,7 @@ mod tests {
         );
         let color = colored_elements();
 
-        let ret = short_mode_shortcut(&key, color, "+", &vec![], false);
+        let ret = short_mode_shortcut(&key, color, "+", "+", &vec![], false);
         let ret = unstyle(ret);
 
         assert_eq!(ret, "+ Ctrl 0 +".to_string());
@@ -960,7 +1005,7 @@ mod tests {
         );
         let color = colored_elements();
 
-        let ret = short_mode_shortcut(&key, color, "+", &vec![KeyModifier::Ctrl], false);
+        let ret = short_mode_shortcut(&key, color, "+", "+", &vec![KeyModifier::Ctrl], false);
         let ret = unstyle(ret);
 
         assert_eq!(ret, "+ 0 +".to_string());
@@ -975,7 +1020,7 @@ mod tests {
         );
         let color = colored_elements();
 
-        let ret = short_mode_shortcut(&key, color, "+", &vec![], true);
+        let ret = short_mode_shortcut(&key, color, "+", "+", &vec![], true);
         let ret = unstyle(ret);
 
         assert_eq!(ret, " 0 +".to_string());
@@ -990,7 +1035,7 @@ mod tests {
         );
         let color = colored_elements();
 
-        let ret = short_mode_shortcut(&key, color, "+", &vec![], false);
+        let ret = short_mode_shortcut(&key, color, "+", "+", &vec![], false);
         let ret = unstyle(ret);
 
         assert_eq!(ret, "+ 0 +".to_string());
@@ -1005,7 +1050,7 @@ mod tests {
         );
         let color = colored_elements();
 
-        let ret = short_mode_shortcut(&key, color, "+", &vec![], false);
+        let ret = short_mode_shortcut(&key, color, "+", "+", &vec![], false);
         let ret = unstyle(ret);
 
         assert_eq!(ret, "+ 0 +".to_string());
@@ -1020,7 +1065,7 @@ mod tests {
         );
         let color = colored_elements();
 
-        let ret = short_mode_shortcut(&key, color, "+", &vec![], false);
+        let ret = short_mode_shortcut(&key, color, "+", "+", &vec![], false);
         let ret = unstyle(ret);
 
         assert_eq!(ret, "+ 0 +".to_string());
@@ -1031,7 +1076,7 @@ mod tests {
         let key = KeyShortcut::new(KeyMode::Selected, KeyAction::Session, None);
         let color = colored_elements();
 
-        let ret = short_mode_shortcut(&key, color, "+", &vec![], false);
+        let ret = short_mode_shortcut(&key, color, "+", "+", &vec![], false);
         let ret = unstyle(ret);
 
         assert_eq!(ret, "".to_string());
@@ -1042,7 +1087,7 @@ mod tests {
         let key = KeyShortcut::new(KeyMode::Unselected, KeyAction::Session, None);
         let color = colored_elements();
 
-        let ret = short_mode_shortcut(&key, color, "+", &vec![], false);
+        let ret = short_mode_shortcut(&key, color, "+", "+", &vec![], false);
         let ret = unstyle(ret);
 
         assert_eq!(ret, "".to_string());
@@ -1053,7 +1098,7 @@ mod tests {
         let key = KeyShortcut::new(KeyMode::UnselectedAlternate, KeyAction::Session, None);
         let color = colored_elements();
 
-        let ret = short_mode_shortcut(&key, color, "+", &vec![], false);
+        let ret = short_mode_shortcut(&key, color, "+", "+", &vec![], false);
         let ret = unstyle(ret);
 
         assert_eq!(ret, "".to_string());
@@ -1064,7 +1109,7 @@ mod tests {
         let key = KeyShortcut::new(KeyMode::Selected, KeyAction::Session, None);
         let color = colored_elements();
 
-        let ret = short_mode_shortcut(&key, color, "+", &vec![], false);
+        let ret = short_mode_shortcut(&key, color, "+", "+", &vec![], false);
         let ret = unstyle(ret);
 
         assert_eq!(ret, "".to_string());
@@ -1086,7 +1131,7 @@ mod tests {
             ..ModeInfo::default()
         };
 
-        let ret = first_line(&mode_info, None, 500, ">");
+        let ret = first_line(&mode_info, None, 500, ">", ">");
         let ret = unstyle(ret);
 
         assert_eq!(
@@ -1110,7 +1155,7 @@ mod tests {
             ..ModeInfo::default()
         };
 
-        let ret = first_line(&mode_info, None, 500, ">");
+        let ret = first_line(&mode_info, None, 500, ">", ">");
         let ret = unstyle(ret);
 
         assert_eq!(
@@ -1136,7 +1181,7 @@ mod tests {
             ..ModeInfo::default()
         };
 
-        let ret = first_line(&mode_info, None, 500, ">");
+        let ret = first_line(&mode_info, None, 500, ">", ">");
         let ret = unstyle(ret);
 
         assert_eq!(
@@ -1163,7 +1208,7 @@ mod tests {
             ..ModeInfo::default()
         };
 
-        let ret = first_line(&mode_info, None, 50, ">");
+        let ret = first_line(&mode_info, None, 50, ">", ">");
         let ret = unstyle(ret);
 
         assert_eq!(ret, " Ctrl + >> a >> b >> c >> d >> e >".to_string());
@@ -1184,7 +1229,7 @@ mod tests {
             ..ModeInfo::default()
         };
 
-        let ret = first_line(&mode_info, None, 30, "");
+        let ret = first_line(&mode_info, None, 30, "", "");
         let ret = unstyle(ret);
 
         assert_eq!(ret, " Ctrl +  a  b  c ".to_string());

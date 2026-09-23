@@ -21,7 +21,8 @@ pub fn one_line_ui(
     help: &ModeInfo,
     tab_info: Option<&TabInfo>,
     mut max_len: usize,
-    separator: &str,
+    left_separator: &str,
+    right_separator: &str,
     base_mode_is_locked: bool,
     text_copied_to_clipboard_destination: Option<CopyDestination>,
     clipboard_failure: bool,
@@ -52,7 +53,13 @@ pub fn one_line_ui(
     let mut new_pane_range = None;
     let mut floating_range = None;
 
-    let left_part = render_mode_key_indicators(help, max_len, separator, base_mode_is_locked);
+    let left_part = render_mode_key_indicators(
+        help,
+        max_len,
+        left_separator,
+        right_separator,
+        base_mode_is_locked,
+    );
     if let Some(left) = left_part {
         line_part_to_render.append(&left);
         max_len = max_len.saturating_sub(left.len);
@@ -536,7 +543,8 @@ fn base_mode_normal_mode_indicators(help: &ModeInfo) -> HashMap<InputMode, Vec<K
 fn render_mode_key_indicators(
     help: &ModeInfo,
     max_len: usize,
-    separator: &str,
+    _left_separator: &str,
+    right_separator: &str,
     base_mode_is_locked: bool,
 ) -> Option<LinePart> {
     let mut line_part_to_render = LinePart::default();
@@ -570,7 +578,7 @@ fn render_mode_key_indicators(
                     help,
                     &modifiers,
                     &mut line_part_to_render,
-                    separator,
+                    right_separator,
                 );
 
                 let full_shortcut_list =
@@ -1292,13 +1300,13 @@ fn ribbon_range(start: usize, end: usize) -> Option<(usize, usize)> {
 fn hovered_ribbon_wrap(body: String, palette: Styling, supports_arrow_fonts: bool) -> String {
     let ribbon_bg = palette.ribbon_unselected.emphasis_1;
     let outer_bg = palette.text_unselected.background;
-    let arrow = if supports_arrow_fonts {
-        crate::ARROW_SEPARATOR
+    let (left_glyph, right_glyph) = if supports_arrow_fonts {
+        (crate::LEFT_SEPARATOR, crate::RIGHT_SEPARATOR)
     } else {
-        ""
+        ("", "")
     };
-    let left = style!(outer_bg, ribbon_bg).paint(arrow).to_string();
-    let right = style!(ribbon_bg, outer_bg).paint(arrow).to_string();
+    let left = style!(ribbon_bg, outer_bg).paint(left_glyph).to_string();
+    let right = style!(ribbon_bg, outer_bg).paint(right_glyph).to_string();
     format!("{}{}{}", left, body, right)
 }
 
@@ -1524,10 +1532,10 @@ fn add_shortcut_with_key_only(
 
 fn add_keygroup_separator(help: &ModeInfo, max_len: usize) -> Option<LinePart> {
     let supports_arrow_fonts = !help.capabilities.arrow_fonts;
-    let separator = if supports_arrow_fonts {
-        crate::ARROW_SEPARATOR
+    let (left_separator, right_separator) = if supports_arrow_fonts {
+        (crate::LEFT_SEPARATOR, crate::RIGHT_SEPARATOR)
     } else {
-        " "
+        (" ", " ")
     };
     let palette = help.style.colors;
 
@@ -1549,9 +1557,9 @@ fn add_keygroup_separator(help: &ModeInfo, max_len: usize) -> Option<LinePart> {
             bits.push(dim_style.paint(format!(" {} ", mode_help_text)));
             ret.len += mode_help_text.width() + 2;
         }
-        bits.push(dim_style.paint(format!("{}", separator)));
+        bits.push(dim_style.paint(format!("{}", left_separator)));
         bits.push(dim_style.paint(format!(" ")));
-        bits.push(dim_style.paint(format!("{}", separator)));
+        bits.push(dim_style.paint(format!("{}", right_separator)));
         ret.part = format!("{}{}", ret.part, ANSIStrings(&bits));
         ret.len += 3;
 
@@ -1589,7 +1597,7 @@ fn add_keygroup_separator(help: &ModeInfo, max_len: usize) -> Option<LinePart> {
             .fg(bg_color)
             .on(separator_color)
             .bold()
-            .paint(format!("{}", separator)),
+            .paint(format!("{}", left_separator)),
     );
     bits.push(
         Style::new()
@@ -1600,10 +1608,10 @@ fn add_keygroup_separator(help: &ModeInfo, max_len: usize) -> Option<LinePart> {
     );
     bits.push(
         Style::new()
-            .fg(separator_color)
-            .on(bg_color)
+            .fg(bg_color)
+            .on(separator_color)
             .bold()
-            .paint(format!("{}", separator)),
+            .paint(format!("{}", right_separator)),
     );
     ret.part = format!("{}{}", ret.part, ANSIStrings(&bits));
     ret.len += 3; // padding and arrow fonts

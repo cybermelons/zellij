@@ -25,7 +25,11 @@ use second_line::{
 use tip::utils::get_cached_tip_name;
 
 // for more of these, copy paste from: https://en.wikipedia.org/wiki/Box-drawing_character
-static ARROW_SEPARATOR: &str = "";
+// Round powerline caps (Nerd Font): left cap U+E0B6, right cap U+E0B4.
+// Both are painted fg = chip background, bg = bar background (same on
+// both sides) -- unlike the old arrow glyph, which swapped fg/bg between sides.
+static LEFT_SEPARATOR: &str = "";
+static RIGHT_SEPARATOR: &str = "";
 static MORE_MSG: &str = " ... ";
 /// Shorthand for `Action::SwitchToMode{input_mode: InputMode::Normal}`.
 const TO_NORMAL: Action = Action::SwitchToMode {
@@ -105,7 +109,7 @@ fn color_elements(
         let ribbon_background = palette.ribbon_unselected.background;
         let italic_on_ribbon = style!(palette.ribbon_unselected.base, ribbon_background).italic();
         let dim_segment = SegmentStyle {
-            prefix_separator: style!(background, ribbon_background),
+            prefix_separator: style!(ribbon_background, background),
             char_left_separator: italic_on_ribbon,
             char_shortcut: italic_on_ribbon,
             char_right_separator: italic_on_ribbon,
@@ -130,7 +134,7 @@ fn color_elements(
     };
     ColoredElements {
         selected: SegmentStyle {
-            prefix_separator: style!(background, palette.ribbon_selected.background),
+            prefix_separator: style!(palette.ribbon_selected.background, background).bold(),
             char_left_separator: style!(
                 palette.ribbon_selected.base,
                 palette.ribbon_selected.background
@@ -154,7 +158,7 @@ fn color_elements(
             suffix_separator: style!(palette.ribbon_selected.background, background).bold(),
         },
         unselected: SegmentStyle {
-            prefix_separator: style!(background, palette.ribbon_unselected.background),
+            prefix_separator: style!(palette.ribbon_unselected.background, background).bold(),
             char_left_separator: style!(
                 palette.ribbon_unselected.base,
                 palette.ribbon_unselected.background
@@ -178,7 +182,7 @@ fn color_elements(
             suffix_separator: style!(palette.ribbon_unselected.background, background).bold(),
         },
         unselected_alternate: SegmentStyle {
-            prefix_separator: style!(background, alternate_background_color),
+            prefix_separator: style!(alternate_background_color, background).bold(),
             char_left_separator: style!(background, alternate_background_color).bold(),
             char_shortcut: style!(
                 palette.ribbon_unselected.emphasis_0,
@@ -190,7 +194,7 @@ fn color_elements(
             suffix_separator: style!(alternate_background_color, background).bold(),
         },
         disabled: SegmentStyle {
-            prefix_separator: style!(background, palette.ribbon_unselected.background),
+            prefix_separator: style!(palette.ribbon_unselected.background, background),
             char_left_separator: style!(
                 palette.ribbon_unselected.base,
                 palette.ribbon_unselected.background
@@ -238,6 +242,8 @@ impl ZellijPlugin for State {
             .map(|c| c == "true")
             .unwrap_or(false);
         set_selectable(false);
+        // Built-ins are granted implicitly; loaded from file: this build must ask.
+        request_permission(&[PermissionType::ReadApplicationState]);
         subscribe(&[
             EventType::ModeUpdate,
             EventType::TabUpdate,
@@ -333,10 +339,10 @@ impl ZellijPlugin for State {
 
     fn render(&mut self, rows: usize, cols: usize) {
         let supports_arrow_fonts = !self.mode_info.capabilities.arrow_fonts;
-        let separator = if supports_arrow_fonts {
-            ARROW_SEPARATOR
+        let (left_separator, right_separator) = if supports_arrow_fonts {
+            (LEFT_SEPARATOR, RIGHT_SEPARATOR)
         } else {
-            ""
+            ("", "")
         };
 
         let background = self.mode_info.style.colors.text_unselected.background;
@@ -351,7 +357,8 @@ impl ZellijPlugin for State {
                 &self.mode_info,
                 active_tab,
                 cols,
-                separator,
+                left_separator,
+                right_separator,
                 self.base_mode_is_locked,
                 self.text_copy_destination,
                 self.display_system_clipboard_failure,
@@ -368,7 +375,13 @@ impl ZellijPlugin for State {
 
         //TODO: Switch to UI components here
         let active_tab = self.tabs.iter().find(|t| t.active);
-        let first_line = first_line(&self.mode_info, active_tab, cols, separator);
+        let first_line = first_line(
+            &self.mode_info,
+            active_tab,
+            cols,
+            left_separator,
+            right_separator,
+        );
         let second_line = self.second_line(cols);
         let show_nested_session_hint = self.mode_info.session_dimmed.unwrap_or(false)
             || self.mode_info.session_ascended.unwrap_or(false);

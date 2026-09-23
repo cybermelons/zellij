@@ -16,11 +16,11 @@ pub fn top_tab_menu(cols: usize, current_screen: &Screen, colors: &Styling) {
         Screen::Presets(_) => (false, true),
     };
     let (first_ribbon_text, second_ribbon_text, starting_positions) = if cols
-        >= first_ribbon_text_long.chars().count() + second_ribbon_text_long.chars().count() + 14
+        >= first_ribbon_text_long.chars().count() + second_ribbon_text_long.chars().count() + 12
     {
-        (first_ribbon_text_long, second_ribbon_text_long, (6, 28))
+        (first_ribbon_text_long, second_ribbon_text_long, (6, 27))
     } else {
-        (first_ribbon_text_short, second_ribbon_text_short, (6, 21))
+        (first_ribbon_text_short, second_ribbon_text_short, (6, 20))
     };
     let mut first_ribbon = Text::new(first_ribbon_text);
     let mut second_ribbon = Text::new(second_ribbon_text);

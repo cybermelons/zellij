@@ -11,7 +11,7 @@ use crate::plugins::watch_filesystem::watch_filesystem;
 use crate::plugins::zellij_exports::{wasi_read_string, wasi_write_object};
 use highway::{HighwayHash, PortableHash};
 use log::info;
-use notify_debouncer_full::{notify::RecommendedWatcher, Debouncer, FileIdMap};
+use notify_debouncer_full::{notify::RecommendedWatcher, Debouncer, RecommendedCache};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     path::PathBuf,
@@ -23,8 +23,9 @@ use url::Url;
 use wasmi::{Engine, Module};
 use zellij_utils::consts::{ZELLIJ_CACHE_DIR, ZELLIJ_SESSION_CACHE_DIR, ZELLIJ_TMP_DIR};
 use zellij_utils::data::{
-    FloatingPaneCoordinates, InputMode, LayoutInfo, LayoutWithError, PaneContents,
-    PaneRenderReport, PermissionStatus, PermissionType, PipeMessage, PipeSource,
+    FloatingPaneCoordinates, HostTerminalThemeMode, InputMode, KeybindsVec, LayoutInfo,
+    LayoutWithError, PaneContents, PaneRenderReport, PermissionStatus, PermissionType, PipeMessage,
+    PipeSource,
 };
 use zellij_utils::downloader::Downloader;
 use zellij_utils::input::keybinds::Keybinds;
@@ -44,7 +45,7 @@ use zellij_utils::{
     errors::prelude::*,
     input::{
         command::TerminalAction,
-        layout::{PluginUserConfiguration, RunPlugin, RunPluginLocation, RunPluginOrAlias},
+        layout::{Layout, PluginUserConfiguration, RunPlugin, RunPluginLocation, RunPluginOrAlias},
         plugins::{PluginAliases, PluginConfig},
     },
     pane_size::Size,
@@ -177,7 +178,6 @@ pub struct WasmBridge {
     plugin_ids_waiting_for_permission_request: HashSet<PluginId>,
     cached_events_for_pending_plugins: HashMap<PluginId, Vec<EventOrPipeMessage>>,
     cached_resizes_for_pending_plugins: HashMap<PluginId, (usize, usize)>, // (rows, columns)
-    clients_holding_mobile_render_until_size_settled: HashSet<ClientId>,
     cached_worker_messages: HashMap<PluginId, Vec<(ClientId, String, String, String)>>, // Vec<clientid,
     // worker_name,
     // message,
@@ -185,7 +185,7 @@ pub struct WasmBridge {
     loading_plugins: HashSet<(PluginId, RunPlugin)>, // tracks loading plugins without handles
     pending_plugin_reloads: HashSet<RunPlugin>,
     path_to_default_shell: PathBuf,
-    watcher: Option<Debouncer<RecommendedWatcher, FileIdMap>>,
+    watcher: Option<Debouncer<RecommendedWatcher, RecommendedCache>>,
     zellij_cwd: PathBuf,
     session_env_vars: std::collections::BTreeMap<String, String>,
     default_shell: Option<TerminalAction>,
@@ -193,6 +193,10 @@ pub struct WasmBridge {
         HashMap<RunPluginLocation, HashMap<PluginUserConfiguration, Vec<(PluginId, ClientId)>>>,
     pending_pipes: PendingPipes,
     layout_dir: Option<PathBuf>,
+    // path to the layout file this session was started with (the `--layout` argument), if any.
+    // used to re-read the layout from disk on plugin reload so that config changes made to the
+    // layout file are picked up (issue #3994)
+    layout_path: Option<PathBuf>,
     available_layouts: Vec<LayoutInfo>,
     available_layout_errors: Vec<LayoutWithError>,
     default_mode: InputMode,
@@ -201,6 +205,7 @@ pub struct WasmBridge {
     base_modes: HashMap<ClientId, InputMode>,
     downloader: Downloader,
     previous_pane_render_report: Option<PaneRenderReport>,
+    last_host_terminal_theme_mode: Option<HostTerminalThemeMode>,
     pub last_session_save_time: Arc<Mutex<Option<u64>>>, // milliseconds since UNIX epoch
 }
 
@@ -214,6 +219,7 @@ impl WasmBridge {
         session_env_vars: std::collections::BTreeMap<String, String>,
         default_shell: Option<TerminalAction>,
         layout_dir: Option<PathBuf>,
+        layout_path: Option<PathBuf>,
         available_layouts: Vec<LayoutInfo>,
         available_layout_errors: Vec<LayoutWithError>,
         default_mode: InputMode,
@@ -243,7 +249,6 @@ impl WasmBridge {
             path_to_default_shell,
             watcher,
             next_plugin_id: 0,
-            clients_holding_mobile_render_until_size_settled: HashSet::new(),
             cached_events_for_pending_plugins: HashMap::new(),
             plugin_ids_waiting_for_permission_request: HashSet::new(),
             cached_resizes_for_pending_plugins: HashMap::new(),
@@ -256,6 +261,7 @@ impl WasmBridge {
             cached_plugin_map: HashMap::new(),
             pending_pipes: Default::default(),
             layout_dir,
+            layout_path,
             available_layouts,
             available_layout_errors,
             default_mode,
@@ -264,6 +270,7 @@ impl WasmBridge {
             base_modes: HashMap::new(),
             downloader,
             previous_pane_render_report: None,
+            last_host_terminal_theme_mode: None,
             last_session_save_time: Arc::new(Mutex::new(None)),
         }
     }
@@ -501,17 +508,6 @@ impl WasmBridge {
             plugin_map.remove_plugins(pid).into_iter().collect()
         };
 
-        // Check if any removed plugin was subscribed to ANSI pane render
-        let was_subscribed_to_ansi =
-            plugins_to_cleanup
-                .iter()
-                .any(|((_, _), (_, subscriptions, _))| {
-                    subscriptions
-                        .lock()
-                        .unwrap()
-                        .contains(&EventType::PaneRenderReportWithAnsi)
-                });
-
         // Schedule cleanup on each plugin's pinned thread
         for ((plugin_id, client_id), (running_plugin, subscriptions, workers)) in plugins_to_cleanup
         {
@@ -591,14 +587,22 @@ impl WasmBridge {
             .senders
             .send_to_background_jobs(BackgroundJob::ReportPluginList(plugin_list));
 
-        // If any unloaded plugin was subscribed to ANSI pane content, re-check remaining plugins
-        if was_subscribed_to_ansi {
-            self.notify_screen_of_ansi_subscription_change();
-        }
-
         Ok(())
     }
     pub fn reload_plugin_with_id(&mut self, plugin_id: u32) -> Result<()> {
+        // if this session was started from a layout file, re-read it from disk so that any config
+        // changes the user made to this plugin's config block are applied on reload (issue #3994).
+        // If we can't unambiguously determine a fresh config, pass None and behavior is unchanged.
+        let fresh_config = self
+            .run_plugin_of_plugin_id(plugin_id)
+            .and_then(|run_plugin| self.fresh_config_from_layout(&run_plugin.location));
+        self.reload_plugin_with_id_and_config(plugin_id, fresh_config)
+    }
+    pub fn reload_plugin_with_id_and_config(
+        &mut self,
+        plugin_id: u32,
+        new_configuration: Option<PluginUserConfiguration>,
+    ) -> Result<()> {
         let Some(run_plugin) = self.run_plugin_of_plugin_id(plugin_id).map(|r| r.clone()) else {
             log::error!("Failed to find plugin with id: {}", plugin_id);
             return Ok(());
@@ -620,10 +624,23 @@ impl WasmBridge {
             log::error!("No connected clients, cannot reload plugin.");
             return Ok(());
         };
-        let Some(plugin_config) = self.plugin_config_of_plugin_id(plugin_id) else {
-            log::error!("Could not find running plugin with id: {}", plugin_id);
+        let Some(mut plugin_config) = self.plugin_config_of_plugin_id(plugin_id) else {
+            log::error!(
+                "Could not find running plugin with id {}; new configuration (if any) was NOT applied",
+                plugin_id
+            );
             return Ok(());
         };
+        // If a new configuration was provided (and is non-empty), override the
+        // stored configuration so the reloaded plugin instance picks it up.
+        if let Some(new_configuration) = new_configuration {
+            if !new_configuration.inner().is_empty() {
+                plugin_config.initial_userspace_configuration = new_configuration;
+                // clear the cached plugin map, since this reload changes the
+                // configuration the cache is keyed on
+                self.cached_plugin_map.clear();
+            }
+        }
         let tab_index = self.tab_index_of_plugin_id(plugin_id);
         let Some(size) = self.size_of_plugin_id(plugin_id) else {
             log::error!(
@@ -691,10 +708,24 @@ impl WasmBridge {
             return Ok(());
         }
 
+        // Look up running instances by location only (ignoring configuration), so that a
+        // reload carrying a *new* configuration still matches the currently running plugin
+        // instances instead of falling through to opening a brand-new pane.
         let plugin_ids = self
-            .all_plugin_ids_for_plugin_location(&run_plugin.location, &run_plugin.configuration)?;
+            .plugin_map
+            .lock()
+            .map_err(|e| anyhow!("plugin_map lock poisoned: {e}"))
+            .with_context(|| format!("failed to reload plugin at {}", run_plugin.location))?
+            .all_plugin_ids_for_plugin_location_ignoring_configuration(&run_plugin.location)?;
+        // Only thread the configuration through when it is non-empty; an empty configuration
+        // means "bare reload" and should preserve the currently running configuration.
+        let new_configuration = if run_plugin.configuration.inner().is_empty() {
+            None
+        } else {
+            Some(run_plugin.configuration.clone())
+        };
         for plugin_id in &plugin_ids {
-            self.reload_plugin_with_id(*plugin_id)?;
+            self.reload_plugin_with_id_and_config(*plugin_id, new_configuration.clone())?;
         }
         Ok(())
     }
@@ -708,6 +739,14 @@ impl WasmBridge {
             new_plugins.insert(plugin_id);
         }
         for plugin_id in new_plugins {
+            if self
+                .plugin_map
+                .lock()
+                .unwrap()
+                .contains(plugin_id, client_id)
+            {
+                continue;
+            }
             let Some(run_plugin) = self.run_plugin_of_plugin_id(plugin_id).map(|r| r.clone())
             else {
                 log::error!("Failed to find plugin with id: {}", plugin_id);
@@ -891,6 +930,13 @@ impl WasmBridge {
         mut updates: Vec<(Option<PluginId>, Option<ClientId>, Event)>,
         shutdown_sender: Sender<()>,
     ) -> Result<()> {
+        for (plugin_id, client_id, event) in updates.iter() {
+            if plugin_id.is_none() && client_id.is_none() {
+                if let Event::HostTerminalThemeChanged(mode) = event {
+                    self.last_host_terminal_theme_mode = Some(*mode);
+                }
+            }
+        }
         let plugins_to_update: Vec<(
             PluginId,
             ClientId,
@@ -1216,69 +1262,6 @@ impl WasmBridge {
         }
         Ok(())
     }
-    fn plugin_render_is_held_until_size_settled(&self, plugin_id: PluginId) -> bool {
-        let clients_of_plugin: Vec<ClientId> = self
-            .plugin_map
-            .lock()
-            .unwrap()
-            .running_plugins()
-            .iter()
-            .filter(|(pid, _client_id, _running_plugin)| *pid == plugin_id)
-            .map(|(_pid, client_id, _running_plugin)| *client_id)
-            .collect();
-        !clients_of_plugin.is_empty()
-            && clients_of_plugin.iter().all(|client_id| {
-                self.clients_holding_mobile_render_until_size_settled
-                    .contains(client_id)
-            })
-    }
-
-    pub fn hold_mobile_render(&mut self, client_id: ClientId) {
-        self.clients_holding_mobile_render_until_size_settled
-            .insert(client_id);
-    }
-
-    pub fn release_mobile_render(
-        &mut self,
-        client_id: ClientId,
-        shutdown_sender: Sender<()>,
-    ) -> Result<()> {
-        if !self
-            .clients_holding_mobile_render_until_size_settled
-            .remove(&client_id)
-        {
-            return Ok(());
-        }
-        let plugins_held_for_client: Vec<PluginId> = self
-            .plugin_map
-            .lock()
-            .unwrap()
-            .running_plugins()
-            .iter()
-            .filter(|(pid, cid, _)| {
-                *cid == client_id
-                    && (self.cached_events_for_pending_plugins.contains_key(pid)
-                        || self.cached_resizes_for_pending_plugins.contains_key(pid))
-            })
-            .map(|(pid, _cid, _)| *pid)
-            .collect();
-        for plugin_id in &plugins_held_for_client {
-            self.drain_pending_plugin_resize_before_events(*plugin_id, shutdown_sender.clone())?;
-        }
-        Ok(())
-    }
-
-    fn drain_pending_plugin_resize_before_events(
-        &mut self,
-        plugin_id: PluginId,
-        shutdown_sender: Sender<()>,
-    ) -> Result<()> {
-        if let Some((rows, columns)) = self.cached_resizes_for_pending_plugins.remove(&plugin_id) {
-            self.resize_plugin(plugin_id, columns, rows, shutdown_sender.clone())?;
-        }
-        self.apply_cached_events(vec![plugin_id], true, shutdown_sender)
-    }
-
     pub fn apply_cached_events(
         &mut self,
         plugin_ids: Vec<PluginId>,
@@ -1287,9 +1270,6 @@ impl WasmBridge {
     ) -> Result<()> {
         let mut applied_plugin_paths = HashSet::new();
         for plugin_id in plugin_ids {
-            if self.plugin_render_is_held_until_size_settled(plugin_id) {
-                continue;
-            }
             if !done_receiving_permissions
                 && self
                     .plugin_ids_waiting_for_permission_request
@@ -1315,8 +1295,6 @@ impl WasmBridge {
         Ok(())
     }
     pub fn remove_client(&mut self, client_id: ClientId) {
-        self.clients_holding_mobile_render_until_size_settled
-            .remove(&client_id);
         self.connected_clients
             .lock()
             .unwrap()
@@ -1387,44 +1365,8 @@ impl WasmBridge {
             self.update_plugins(updates, shutdown_sender.clone())?;
         }
 
-        if !pane_render_report.all_pane_contents_with_ansi.is_empty() {
-            let changed_ansi_panes_per_client = self.get_changed_panes_per_client(
-                &pane_render_report.all_pane_contents_with_ansi,
-                self.previous_pane_render_report
-                    .as_ref()
-                    .map(|r| &r.all_pane_contents_with_ansi),
-            );
-            for (client_id, client_panes) in changed_ansi_panes_per_client {
-                let updates = vec![(
-                    None,
-                    Some(client_id),
-                    Event::PaneRenderReportWithAnsi(client_panes),
-                )];
-                self.update_plugins(updates, shutdown_sender.clone())?;
-            }
-        }
-
         self.previous_pane_render_report = Some(pane_render_report);
         Ok(())
-    }
-
-    pub fn notify_screen_of_ansi_subscription_change(&self) {
-        let any_plugin_needs_ansi = {
-            let mut plugin_map = self.plugin_map.lock().unwrap();
-            plugin_map
-                .running_plugins_and_subscriptions()
-                .iter()
-                .any(|(_, _, _, subs)| {
-                    subs.lock()
-                        .unwrap()
-                        .contains(&EventType::PaneRenderReportWithAnsi)
-                })
-        };
-        let _ = self
-            .senders
-            .send_to_screen(ScreenInstruction::PluginSubscribedToAnsiPaneContents(
-                any_plugin_needs_ansi,
-            ));
     }
 
     pub fn notify_screen_of_background_plugin_subscriptions(
@@ -1464,12 +1406,36 @@ impl WasmBridge {
                 .map(|(_, _, rp, _)| rp.lock().unwrap().store.data().keybinds.to_keybinds_vec())
         };
         if let Some(keybinds) = keybinds {
-            let _ = self.senders.send_to_plugin(PluginInstruction::Update(vec![(
-                Some(plugin_id),
-                Some(client_id),
-                Event::InitialKeybinds(keybinds),
-            )]));
+            self.send_keybinds_payload_to_plugin(plugin_id, client_id, keybinds);
         }
+    }
+
+    pub fn send_host_terminal_theme_mode_to_plugin(
+        &self,
+        plugin_id: PluginId,
+        client_id: ClientId,
+    ) {
+        let Some(mode) = self.last_host_terminal_theme_mode else {
+            return;
+        };
+        let _ = self.senders.send_to_plugin(PluginInstruction::Update(vec![(
+            Some(plugin_id),
+            Some(client_id),
+            Event::HostTerminalThemeChanged(mode),
+        )]));
+    }
+
+    fn send_keybinds_payload_to_plugin(
+        &self,
+        plugin_id: PluginId,
+        client_id: ClientId,
+        keybinds: KeybindsVec,
+    ) {
+        let _ = self.senders.send_to_plugin(PluginInstruction::Update(vec![(
+            Some(plugin_id),
+            Some(client_id),
+            Event::InitialKeybinds(keybinds),
+        )]));
     }
 
     pub fn cleanup(&mut self) {
@@ -1494,6 +1460,90 @@ impl WasmBridge {
             .lock()
             .unwrap()
             .run_plugin_of_plugin_id(plugin_id)
+    }
+
+    // Re-reads the layout file this session was started with (the `--layout` argument) from disk
+    // and returns the fresh `PluginUserConfiguration` for the plugin at the given location, if it
+    // can be unambiguously determined. Used on plugin reload so that edits to the layout file's
+    // plugin config block are picked up (issue #3994).
+    //
+    // Returns `None` (leaving the in-memory config untouched) when:
+    //   - no layout file was used to start the session
+    //   - the layout file cannot be re-parsed from disk
+    //   - the location does not appear in the layout
+    //   - the location appears MORE THAN ONCE with differing configurations (ambiguous: we can't
+    //     know which pane's config the user intends, so we honestly decline to override)
+    fn fresh_config_from_layout(
+        &self,
+        location: &RunPluginLocation,
+    ) -> Option<PluginUserConfiguration> {
+        let layout_path = self.layout_path.as_ref()?;
+        let layout = match Layout::from_path_or_default_without_config(
+            Some(layout_path),
+            self.layout_dir.clone(),
+        ) {
+            Ok(layout) => layout,
+            Err(e) => {
+                log::error!(
+                    "Failed to re-read layout from {} on plugin reload: {}",
+                    layout_path.display(),
+                    e
+                );
+                return None;
+            },
+        };
+
+        // collect every RunPlugin in the layout matching this location, then de-duplicate by
+        // configuration so identical entries don't count as ambiguous
+        let mut distinct_configs: Vec<PluginUserConfiguration> = Self::run_plugins_in_layout(&layout)
+            .into_iter()
+            .filter(|run_plugin| &run_plugin.location == location)
+            .map(|run_plugin| run_plugin.configuration)
+            .collect();
+        distinct_configs.sort_by_key(|c| format!("{:?}", c));
+        distinct_configs.dedup();
+
+        match distinct_configs.len() {
+            0 => None,
+            1 => Some(distinct_configs.into_iter().next().unwrap()),
+            _ => {
+                log::warn!(
+                    "Layout {} contains multiple plugins at location {:?} with differing \
+                     configurations; not overriding config on reload to avoid applying the wrong one",
+                    layout_path.display(),
+                    location
+                );
+                None
+            },
+        }
+    }
+
+    // Walk a parsed layout (template, tabs, and their floating panes) and collect every RunPlugin
+    // it references.
+    fn run_plugins_in_layout(layout: &Layout) -> Vec<RunPlugin> {
+        let mut run_plugins = vec![];
+        let mut collect = |tiled: &zellij_utils::input::layout::TiledPaneLayout,
+                           floating: &[zellij_utils::input::layout::FloatingPaneLayout]| {
+            for run in tiled.extract_run_instructions().into_iter().flatten() {
+                if let Some(run_plugin) = run.get_run_plugin() {
+                    run_plugins.push(run_plugin);
+                }
+            }
+            for floating_pane in floating {
+                if let Some(run) = floating_pane.run.as_ref() {
+                    if let Some(run_plugin) = run.get_run_plugin() {
+                        run_plugins.push(run_plugin);
+                    }
+                }
+            }
+        };
+        if let Some((tiled, floating)) = layout.template.as_ref() {
+            collect(tiled, floating);
+        }
+        for (_name, tiled, floating) in &layout.tabs {
+            collect(tiled, floating);
+        }
+        run_plugins
     }
 
     pub fn reconfigure(
@@ -1563,8 +1613,15 @@ impl WasmBridge {
             });
         }
         // Send InitialKeybinds to subscribed plugins after reconfiguration
-        for plugin_id in plugins_subscribed_to_initial_keybinds {
-            self.send_initial_keybinds_to_plugin(plugin_id, client_id);
+        if let Some(keybinds) = keybinds.as_ref() {
+            let keybinds_payload = keybinds.to_keybinds_vec();
+            for plugin_id in plugins_subscribed_to_initial_keybinds {
+                self.send_keybinds_payload_to_plugin(
+                    plugin_id,
+                    client_id,
+                    keybinds_payload.clone(),
+                );
+            }
         }
         Ok(())
     }
@@ -1723,16 +1780,6 @@ impl WasmBridge {
                     None
                 }
             })
-    }
-    fn all_plugin_ids_for_plugin_location(
-        &self,
-        plugin_location: &RunPluginLocation,
-        plugin_configuration: &PluginUserConfiguration,
-    ) -> Result<Vec<PluginId>> {
-        self.plugin_map
-            .lock()
-            .unwrap()
-            .all_plugin_ids_for_plugin_location(plugin_location, plugin_configuration)
     }
     pub fn all_plugin_and_client_ids_for_plugin_location(
         &mut self,
@@ -2170,11 +2217,11 @@ fn check_event_permission(
         | Event::PluginConfigurationChanged(..)
         | Event::HighlightClicked { .. }
         | Event::SoftKeyboardVisibilityChanged(..)
+        | Event::HintText(..)
+        | Event::ActivePaneScroll(..)
         | Event::InputReceived => PermissionType::ReadApplicationState,
         Event::WebServerStatus(..) => PermissionType::StartWebServer,
-        Event::PaneRenderReport(..) | Event::PaneRenderReportWithAnsi(..) => {
-            PermissionType::ReadPaneContents
-        },
+        Event::PaneRenderReport(..) => PermissionType::ReadPaneContents,
         Event::UserAction(..) => PermissionType::InterceptInput,
         _ => return (PermissionStatus::Granted, None),
     };
@@ -2206,7 +2253,9 @@ pub fn apply_event_to_plugin(
         (PermissionStatus::Granted, _) => {
             let mut event = event.clone();
             if let Event::ModeUpdate(mode_info) = &mut event {
-                mode_info.base_mode = Some(running_plugin.store.data().default_mode);
+                if mode_info.base_mode.is_none() {
+                    mode_info.base_mode = Some(running_plugin.store.data().default_mode);
+                }
                 if plugin_subscriptions.contains(&EventType::InitialKeybinds) {
                     // Plugin caches keybindings via InitialKeybinds — send lightweight ModeUpdate
                     mode_info.keybinds = vec![];

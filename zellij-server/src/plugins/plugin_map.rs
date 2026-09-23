@@ -147,23 +147,29 @@ impl PluginMap {
             })
             .clone()
     }
-    pub fn all_plugin_ids_for_plugin_location(
+    pub fn all_plugin_ids_for_plugin_location_ignoring_configuration(
         &self,
         plugin_location: &RunPluginLocation,
-        plugin_configuration: &PluginUserConfiguration,
     ) -> Result<Vec<PluginId>> {
         let err_context = || format!("Failed to get plugin ids for location {plugin_location}");
         let plugin_ids: Vec<PluginId> = self
             .plugin_assets
             .iter()
-            .filter(|(_, (running_plugin, _subscriptions, _workers))| {
-                let running_plugin = running_plugin.lock().unwrap();
-                let plugin_config = &running_plugin.store.data().plugin;
-                let running_plugin_location = &plugin_config.location;
-                let running_plugin_configuration = &plugin_config.initial_userspace_configuration;
-                running_plugin_location == plugin_location
-                    && running_plugin_configuration == plugin_configuration
-            })
+            .filter(
+                |((plugin_id, _), (running_plugin, _subscriptions, _workers))| match running_plugin
+                    .lock()
+                {
+                    Ok(running_plugin) => {
+                        &running_plugin.store.data().plugin.location == plugin_location
+                    },
+                    Err(e) => {
+                        log::error!(
+                            "Skipping plugin {plugin_id}: running plugin lock poisoned: {e}"
+                        );
+                        false
+                    },
+                },
+            )
             .map(|((plugin_id, _client_id), _)| *plugin_id)
             .collect();
         if plugin_ids.is_empty() {
@@ -207,6 +213,9 @@ impl PluginMap {
             }
         }
         cloned_plugin_assets
+    }
+    pub fn contains(&self, plugin_id: PluginId, client_id: ClientId) -> bool {
+        self.plugin_assets.contains_key(&(plugin_id, client_id))
     }
     pub fn all_plugin_ids(&self) -> Vec<(PluginId, ClientId)> {
         self.plugin_assets

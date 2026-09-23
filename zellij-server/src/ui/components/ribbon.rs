@@ -2,7 +2,8 @@ use super::{text::stringify_text, Coordinates, Text};
 use crate::panes::terminal_character::{AnsiCode, CharacterStyles, RESET_STYLES};
 use zellij_utils::data::{PaletteColor, Style};
 
-static ARROW_SEPARATOR: &str = "";
+static LEFT_CAP: &str = "";
+static RIGHT_CAP: &str = "";
 
 pub fn ribbon(
     content: Text,
@@ -12,21 +13,62 @@ pub fn ribbon(
 ) -> Vec<u8> {
     let colors = style.colors;
     let background = colors.text_unselected.background;
+    if content.disabled {
+        let declaration = colors.ribbon_unselected;
+        let disabled_content = content.into_disabled();
+        let (first_arrow_styles, text_style, last_arrow_styles) = (
+            character_style(declaration.background, background),
+            RESET_STYLES
+                .foreground(Some(declaration.base.into()))
+                .background(Some(declaration.background.into()))
+                .italic(Some(AnsiCode::On)),
+            character_style(declaration.background, background),
+        );
+        let (left_cap, right_cap, padding) = if arrow_fonts {
+            (LEFT_CAP, RIGHT_CAP, Some(3))
+        } else {
+            ("", "", None)
+        };
+        let (text, _text_width) = stringify_text(
+            &disabled_content,
+            padding,
+            &component_coordinates,
+            &declaration,
+            &colors,
+            text_style,
+        );
+        let mut stringified = component_coordinates
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| String::new());
+        stringified.push_str(&format!(
+            "{}{}{}{}{}{}{}{}{}",
+            RESET_STYLES,
+            first_arrow_styles,
+            left_cap,
+            text_style,
+            text,
+            last_arrow_styles,
+            right_cap,
+            gap_cell(background, arrow_fonts),
+            RESET_STYLES
+        ));
+        return stringified.as_bytes().to_vec();
+    }
     let declaration = if content.selected {
         colors.ribbon_selected
     } else {
         colors.ribbon_unselected
     };
     let (first_arrow_styles, text_style, last_arrow_styles) = (
-        character_style(background, declaration.background),
+        character_style(declaration.background, background),
         character_style(declaration.base, declaration.background),
         character_style(declaration.background, background),
     );
 
-    let (arrow, padding) = if arrow_fonts {
-        (ARROW_SEPARATOR, Some(4))
+    let (left_cap, right_cap, padding) = if arrow_fonts {
+        (LEFT_CAP, RIGHT_CAP, Some(3))
     } else {
-        ("", None)
+        ("", "", None)
     };
 
     let (text, _text_width) = stringify_text(
@@ -41,14 +83,15 @@ pub fn ribbon(
         .map(|c| c.to_string())
         .unwrap_or_else(|| String::new());
     stringified.push_str(&format!(
-        "{}{}{}{} {} {}{}{}",
+        "{}{}{}{}{}{}{}{}{}",
         RESET_STYLES,
         first_arrow_styles,
-        arrow,
+        left_cap,
         text_style,
         text,
         last_arrow_styles,
-        arrow,
+        right_cap,
+        gap_cell(background, arrow_fonts),
         RESET_STYLES
     ));
     stringified.as_bytes().to_vec()
@@ -59,4 +102,18 @@ fn character_style(foreground: PaletteColor, background: PaletteColor) -> Charac
         .foreground(Some(foreground.into()))
         .background(Some(background.into()))
         .bold(Some(AnsiCode::On))
+}
+
+/// One bar-background cell appended after a ribbon so neighbouring ribbons
+/// read as separate bubbles instead of touching cap-to-cap. Only meaningful
+/// with round caps (arrow_fonts); the plain-text fallback is unchanged.
+fn gap_cell(bar_background: PaletteColor, arrow_fonts: bool) -> String {
+    if arrow_fonts {
+        format!(
+            "{} ",
+            character_style(bar_background, bar_background)
+        )
+    } else {
+        String::new()
+    }
 }

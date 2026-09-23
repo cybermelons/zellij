@@ -18,14 +18,18 @@ use zellij_tile_utils::{palette_match, style};
 use first_line::first_line;
 use one_line_ui::one_line_ui;
 use second_line::{
-    floating_panes_are_visible, fullscreen_panes_to_hide, keybinds,
-    locked_floating_panes_are_visible, locked_fullscreen_panes_to_hide, system_clipboard_error,
-    text_copied_hint,
+    ascended_to_host_session_hint, descended_into_nested_session_hint, floating_panes_are_visible,
+    fullscreen_panes_to_hide, keybinds, locked_floating_panes_are_visible,
+    locked_fullscreen_panes_to_hide, system_clipboard_error, text_copied_hint,
 };
 use tip::utils::get_cached_tip_name;
 
 // for more of these, copy paste from: https://en.wikipedia.org/wiki/Box-drawing_character
-static ARROW_SEPARATOR: &str = "";
+// Round powerline caps (Nerd Font): left cap U+E0B6, right cap U+E0B4.
+// Both are painted fg = chip background, bg = bar background (same on
+// both sides) -- unlike the old arrow glyph, which swapped fg/bg between sides.
+static LEFT_SEPARATOR: &str = "";
+static RIGHT_SEPARATOR: &str = "";
 static MORE_MSG: &str = " ... ";
 /// Shorthand for `Action::SwitchToMode{input_mode: InputMode::Normal}`.
 const TO_NORMAL: Action = Action::SwitchToMode {
@@ -42,6 +46,10 @@ struct State {
     classic_ui: bool,
     base_mode_is_locked: bool,
     cached_keybinds: KeybindsVec,
+    new_pane_ribbon_range: Option<(usize, usize)>,
+    floating_ribbon_range: Option<(usize, usize)>,
+    new_pane_ribbon_hovered: bool,
+    floating_ribbon_hovered: bool,
 }
 
 register_plugin!(State);
@@ -90,7 +98,33 @@ pub struct SegmentStyle {
 // we need different colors from palette for the default theme
 // plus here we can add new sources in the future, like Theme
 // that can be defined in the config perhaps
-fn color_elements(palette: Styling, different_color_alternates: bool) -> ColoredElements {
+fn color_elements(
+    palette: Styling,
+    different_color_alternates: bool,
+    dimmed: bool,
+) -> ColoredElements {
+    if dimmed {
+        let background = palette.text_unselected.background;
+        let foreground = palette.text_unselected.base;
+        let ribbon_background = palette.ribbon_unselected.background;
+        let italic_on_ribbon = style!(palette.ribbon_unselected.base, ribbon_background).italic();
+        let dim_segment = SegmentStyle {
+            prefix_separator: style!(ribbon_background, background),
+            char_left_separator: italic_on_ribbon,
+            char_shortcut: italic_on_ribbon,
+            char_right_separator: italic_on_ribbon,
+            styled_text: italic_on_ribbon,
+            suffix_separator: style!(ribbon_background, background),
+        };
+        return ColoredElements {
+            selected: dim_segment,
+            unselected: dim_segment,
+            unselected_alternate: dim_segment,
+            disabled: dim_segment,
+            superkey_prefix: style!(foreground, background).italic(),
+            superkey_suffix_separator: style!(background, background),
+        };
+    }
     let background = palette.text_unselected.background;
     let foreground = palette.text_unselected.base;
     let alternate_background_color = if different_color_alternates {
@@ -100,7 +134,7 @@ fn color_elements(palette: Styling, different_color_alternates: bool) -> Colored
     };
     ColoredElements {
         selected: SegmentStyle {
-            prefix_separator: style!(background, palette.ribbon_selected.background),
+            prefix_separator: style!(palette.ribbon_selected.background, background).bold(),
             char_left_separator: style!(
                 palette.ribbon_selected.base,
                 palette.ribbon_selected.background
@@ -124,7 +158,7 @@ fn color_elements(palette: Styling, different_color_alternates: bool) -> Colored
             suffix_separator: style!(palette.ribbon_selected.background, background).bold(),
         },
         unselected: SegmentStyle {
-            prefix_separator: style!(background, palette.ribbon_unselected.background),
+            prefix_separator: style!(palette.ribbon_unselected.background, background).bold(),
             char_left_separator: style!(
                 palette.ribbon_unselected.base,
                 palette.ribbon_unselected.background
@@ -148,7 +182,7 @@ fn color_elements(palette: Styling, different_color_alternates: bool) -> Colored
             suffix_separator: style!(palette.ribbon_unselected.background, background).bold(),
         },
         unselected_alternate: SegmentStyle {
-            prefix_separator: style!(background, alternate_background_color),
+            prefix_separator: style!(alternate_background_color, background).bold(),
             char_left_separator: style!(background, alternate_background_color).bold(),
             char_shortcut: style!(
                 palette.ribbon_unselected.emphasis_0,
@@ -160,7 +194,7 @@ fn color_elements(palette: Styling, different_color_alternates: bool) -> Colored
             suffix_separator: style!(alternate_background_color, background).bold(),
         },
         disabled: SegmentStyle {
-            prefix_separator: style!(background, palette.ribbon_unselected.background),
+            prefix_separator: style!(palette.ribbon_unselected.background, background),
             char_left_separator: style!(
                 palette.ribbon_unselected.base,
                 palette.ribbon_unselected.background
@@ -192,6 +226,13 @@ fn color_elements(palette: Styling, different_color_alternates: bool) -> Colored
     }
 }
 
+fn col_in_range(range: Option<(usize, usize)>, col: usize) -> bool {
+    match range {
+        Some((start, end)) => col >= start && col < end,
+        None => false,
+    }
+}
+
 impl ZellijPlugin for State {
     fn load(&mut self, configuration: BTreeMap<String, String>) {
         // TODO: Should be able to choose whether to use the cache through config.
@@ -209,6 +250,7 @@ impl ZellijPlugin for State {
             EventType::InputReceived,
             EventType::SystemClipboardFailure,
             EventType::InitialKeybinds,
+            EventType::Mouse,
         ]);
     }
 
@@ -266,6 +308,28 @@ impl ZellijPlugin for State {
                 self.text_copy_destination = None;
                 self.display_system_clipboard_failure = false;
             },
+            Event::Mouse(mouse_event) => match mouse_event {
+                Mouse::LeftClick(_, col) => {
+                    if col_in_range(self.new_pane_ribbon_range, col) {
+                        new_pane();
+                    } else if col_in_range(self.floating_ribbon_range, col) {
+                        toggle_floating_panes(None);
+                    }
+                },
+                Mouse::Hover(_, col) => {
+                    let new_pane_hovered = col_in_range(self.new_pane_ribbon_range, col);
+                    let floating_hovered =
+                        !new_pane_hovered && col_in_range(self.floating_ribbon_range, col);
+                    if self.new_pane_ribbon_hovered != new_pane_hovered
+                        || self.floating_ribbon_hovered != floating_hovered
+                    {
+                        self.new_pane_ribbon_hovered = new_pane_hovered;
+                        self.floating_ribbon_hovered = floating_hovered;
+                        should_render = true;
+                    }
+                },
+                _ => {},
+            },
             _ => {},
         };
         should_render
@@ -273,10 +337,10 @@ impl ZellijPlugin for State {
 
     fn render(&mut self, rows: usize, cols: usize) {
         let supports_arrow_fonts = !self.mode_info.capabilities.arrow_fonts;
-        let separator = if supports_arrow_fonts {
-            ARROW_SEPARATOR
+        let (left_separator, right_separator) = if supports_arrow_fonts {
+            (LEFT_SEPARATOR, RIGHT_SEPARATOR)
         } else {
-            ""
+            ("", "")
         };
 
         let background = self.mode_info.style.colors.text_unselected.background;
@@ -287,26 +351,38 @@ impl ZellijPlugin for State {
                 PaletteColor::EightBit(color) => format!("\u{1b}[48;5;{}m\u{1b}[0K", color),
             };
             let active_tab = self.tabs.iter().find(|t| t.active);
-            print!(
-                "{}{}",
-                one_line_ui(
-                    &self.mode_info,
-                    active_tab,
-                    cols,
-                    separator,
-                    self.base_mode_is_locked,
-                    self.text_copy_destination,
-                    self.display_system_clipboard_failure,
-                ),
-                fill_bg,
+            let (line, new_pane_ribbon_range, floating_ribbon_range) = one_line_ui(
+                &self.mode_info,
+                active_tab,
+                cols,
+                left_separator,
+                right_separator,
+                self.base_mode_is_locked,
+                self.text_copy_destination,
+                self.display_system_clipboard_failure,
+                self.new_pane_ribbon_hovered,
+                self.floating_ribbon_hovered,
             );
+            self.new_pane_ribbon_range = new_pane_ribbon_range;
+            self.floating_ribbon_range = floating_ribbon_range;
+            print!("{}{}", line, fill_bg);
             return;
         }
+        self.new_pane_ribbon_range = None;
+        self.floating_ribbon_range = None;
 
         //TODO: Switch to UI components here
         let active_tab = self.tabs.iter().find(|t| t.active);
-        let first_line = first_line(&self.mode_info, active_tab, cols, separator);
+        let first_line = first_line(
+            &self.mode_info,
+            active_tab,
+            cols,
+            left_separator,
+            right_separator,
+        );
         let second_line = self.second_line(cols);
+        let show_nested_session_hint = self.mode_info.session_dimmed.unwrap_or(false)
+            || self.mode_info.session_ascended.unwrap_or(false);
 
         // [48;5;238m is white background, [0K is so that it fills the rest of the line
         // [m is background reset, [0K is so that it clears the rest of the line
@@ -315,7 +391,9 @@ impl ZellijPlugin for State {
                 if rows > 1 {
                     println!("{}\u{1b}[48;2;{};{};{}m\u{1b}[0K", first_line, r, g, b);
                 } else {
-                    if self.mode_info.mode == InputMode::Normal {
+                    if show_nested_session_hint {
+                        print!("\u{1b}[m{}\u{1b}[0K", second_line);
+                    } else if self.mode_info.mode == InputMode::Normal {
                         print!("{}\u{1b}[48;2;{};{};{}m\u{1b}[0K", first_line, r, g, b);
                     } else {
                         print!("\u{1b}[m{}\u{1b}[0K", second_line);
@@ -326,7 +404,9 @@ impl ZellijPlugin for State {
                 if rows > 1 {
                     println!("{}\u{1b}[48;5;{}m\u{1b}[0K", first_line, color);
                 } else {
-                    if self.mode_info.mode == InputMode::Normal {
+                    if show_nested_session_hint {
+                        print!("\u{1b}[m{}\u{1b}[0K", second_line);
+                    } else if self.mode_info.mode == InputMode::Normal {
                         print!("{}\u{1b}[48;5;{}m\u{1b}[0K", first_line, color);
                     } else {
                         print!("\u{1b}[m{}\u{1b}[0K", second_line);
@@ -345,6 +425,12 @@ impl State {
     fn second_line(&self, cols: usize) -> LinePart {
         let active_tab = self.tabs.iter().find(|t| t.active);
 
+        if self.mode_info.session_dimmed.unwrap_or(false) {
+            return descended_into_nested_session_hint(&self.mode_info, cols);
+        }
+        if self.mode_info.session_ascended.unwrap_or(false) {
+            return ascended_to_host_session_hint(&self.mode_info, cols);
+        }
         if let Some(copy_destination) = self.text_copy_destination {
             text_copied_hint(copy_destination)
         } else if self.display_system_clipboard_failure {

@@ -1,11 +1,10 @@
 ---
 source: zellij-server/src/panes/./unit/grid_tests.rs
-assertion_line: 3183
 expression: "format!(\"{:?}\", grid)"
 ---
 00 (C): 
 01 (C):                                                                                                               
-02 (C):    ribbon 1                                                                                                 
+02 (C):   ribbon 1                                                                                                  
 03 (C): 
 04 (C): 
 05 (C): 
@@ -43,5 +42,4 @@ expression: "format!(\"{:?}\", grid)"
 37 (C): 
 38 (C): 
 39 (C): 
-40 (C): 
-
+40 (C):

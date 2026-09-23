@@ -5,10 +5,11 @@ use crate::input::keybinds::Keybinds;
 use crate::input::layout::{
     Layout, PercentOrFixed, Run, RunPlugin, RunPluginLocation, RunPluginOrAlias,
 };
-use crate::pane_size::{PaneGeom, Size};
+pub use crate::input::options::PaneFrameStyle;
+use crate::pane_size::PaneGeom;
 use crate::position::Position;
 use crate::shared::{colors as default_colors, eightbit_to_rgb};
-use clap::ArgEnum;
+use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
@@ -253,6 +254,7 @@ impl FromStr for BareKey {
             "end" => Ok(BareKey::End),
             "backspace" => Ok(BareKey::Backspace),
             "delete" => Ok(BareKey::Delete),
+            "del" => Ok(BareKey::Delete),
             "insert" => Ok(BareKey::Insert),
             "f1" => Ok(BareKey::F(1)),
             "f2" => Ok(BareKey::F(2)),
@@ -938,6 +940,12 @@ impl From<Metadata> for FileMetadata {
     }
 }
 
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StyledText {
+    pub text: String,
+    pub indices: Vec<Vec<usize>>,
+}
+
 /// These events can be subscribed to with subscribe method exported by `zellij-tile`.
 /// Once subscribed to, they will trigger the `update` method of the `ZellijPlugin` trait.
 #[derive(Debug, Clone, PartialEq, EnumDiscriminants, Display, Serialize, Deserialize)]
@@ -1012,7 +1020,6 @@ pub enum Event {
     /// An action was performed by the user (requires InterceptInput permission)
     UserAction(Action, ClientId, Option<u32>, Option<ClientId>), // Action, client_id, terminal_id, cli_client_id
     PaneRenderReport(HashMap<PaneId, PaneContents>),
-    PaneRenderReportWithAnsi(HashMap<PaneId, PaneContents>),
     ActionComplete(Action, Option<PaneId>, BTreeMap<String, String>), // Action, pane_id, context
     CwdChanged(PaneId, PathBuf, Vec<ClientId>), // pane_id, cwd, focused_client_ids
     CommandChanged(PaneId, Vec<String>, bool, Vec<ClientId>), // pane_id, command, is_foreground, focused_client_ids
@@ -1031,6 +1038,8 @@ pub enum Event {
     /// The host terminal indicated its color palette theme mode (CSI 2031 / DSR 997).
     HostTerminalThemeChanged(HostTerminalThemeMode),
     SoftKeyboardVisibilityChanged(bool),
+    HintText(BTreeMap<usize, StyledText>),
+    ActivePaneScroll(Option<(usize, usize)>),
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1142,7 +1151,7 @@ impl PluginPermission {
     EnumIter,
     Serialize,
     Deserialize,
-    ArgEnum,
+    ValueEnum,
     PartialOrd,
     Ord,
 )]
@@ -1199,14 +1208,57 @@ impl Default for InputMode {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, ValueEnum)]
 pub enum ThemeHue {
+    #[serde(alias = "light")]
     Light,
+    #[serde(alias = "dark")]
     Dark,
 }
 impl Default for ThemeHue {
     fn default() -> ThemeHue {
         ThemeHue::Dark
+    }
+}
+
+impl FromStr for ThemeHue {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_lowercase().as_str() {
+            "light" => Ok(ThemeHue::Light),
+            "dark" => Ok(ThemeHue::Dark),
+            e => Err(format!(
+                "Unknown theme hue: '{}' (expected 'dark' or 'light')",
+                e
+            )),
+        }
+    }
+}
+
+impl fmt::Display for ThemeHue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ThemeHue::Light => write!(f, "light"),
+            ThemeHue::Dark => write!(f, "dark"),
+        }
+    }
+}
+
+impl From<ThemeHue> for HostTerminalThemeMode {
+    fn from(hue: ThemeHue) -> Self {
+        match hue {
+            ThemeHue::Light => HostTerminalThemeMode::Light,
+            ThemeHue::Dark => HostTerminalThemeMode::Dark,
+        }
+    }
+}
+
+impl From<HostTerminalThemeMode> for ThemeHue {
+    fn from(mode: HostTerminalThemeMode) -> Self {
+        match mode {
+            HostTerminalThemeMode::Light => ThemeHue::Light,
+            HostTerminalThemeMode::Dark => ThemeHue::Dark,
+        }
     }
 }
 
@@ -1741,6 +1793,13 @@ pub struct ModeInfo {
     pub web_server_ip: Option<IpAddr>,
     pub web_server_port: Option<u16>,
     pub web_server_capability: Option<bool>,
+    pub pane_frame_style: Option<PaneFrameStyle>,
+    pub session_dimmed: Option<bool>,
+    pub session_ancestry: Vec<String>,
+    pub host_fullscreen: Option<bool>,
+    pub nested_ascend_keys: Vec<KeyWithModifier>,
+    pub session_ascended: Option<bool>,
+    pub nested_descend_keys: Vec<KeyWithModifier>,
 }
 
 impl ModeInfo {
@@ -2255,9 +2314,9 @@ pub struct TabInfo {
     pub active_swap_layout_name: Option<String>,
     /// Whether the user manually changed the layout, moving out of the swap layout scheme
     pub is_swap_layout_dirty: bool,
-    /// Row count in the viewport (including all non-ui panes, eg. will excluse the status bar)
+    /// Row count in the viewport (including all non-ui panes, eg. will exclude the status bar)
     pub viewport_rows: usize,
-    /// Column count in the viewport (including all non-ui panes, eg. will excluse the status bar)
+    /// Column count in the viewport (including all non-ui panes, eg. will exclude the status bar)
     pub viewport_columns: usize,
     /// Row count in the display area (including all panes, will typically be larger than the
     /// viewport)
@@ -3170,7 +3229,7 @@ impl OriginatingPlugin {
     }
 }
 
-#[derive(ArgEnum, Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(ValueEnum, Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WebSharing {
     #[serde(alias = "on")]
     On,
@@ -3378,12 +3437,17 @@ pub enum PluginCommand {
     NewTiledPaneInTab {
         tab_position: usize,
     },
+    ToggleFloatingPanes {
+        tab_id: Option<u64>,
+    },
+    NewPane,
     GoToNextTab,
     GoToPreviousTab,
     Resize(Resize),
     ResizeWithDirection(ResizeStrategy),
     FocusNextPane,
     FocusPreviousPane,
+    FocusLastPane,
     MoveFocus(Direction),
     MoveFocusOrTab(Direction),
     Detach,
@@ -3401,7 +3465,9 @@ pub enum PluginCommand {
     PageScrollUp,
     PageScrollDown,
     ToggleFocusFullscreen,
+    ToggleFocusNoUiFullscreen,
     TogglePaneFrames,
+    SetPaneFrameStyle(PaneFrameStyle),
     TogglePaneEmbedOrEject,
     UndoRenamePane,
     CloseFocus,
@@ -3623,12 +3689,7 @@ pub enum PluginCommand {
     DeleteDeadSessionAndReply(String), // session name; sends a response back
     DeleteAllDeadSessionsAndReply,     // no payload; sends a response back
     SetSoftKeyboard(bool),
-    SetTabFit {
-        tab_id: usize,
-        fit: Option<(PaneId, Size)>,
-    },
-    SetShadowFocus(PaneId),
-    ExitMobileMode,
+    FocusHostSession,
 }
 
 // Response type for plugin API methods that open a pane in a new tab

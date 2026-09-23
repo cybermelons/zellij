@@ -242,8 +242,6 @@ impl ZellijPlugin for State {
             .map(|c| c == "true")
             .unwrap_or(false);
         set_selectable(false);
-        // Built-ins are granted implicitly; loaded from file: this build must ask.
-        request_permission(&[PermissionType::ReadApplicationState]);
         subscribe(&[
             EventType::ModeUpdate,
             EventType::TabUpdate,
